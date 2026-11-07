@@ -1,0 +1,4 @@
+Name,Address,Latitude,Longitude,Required,Notes
+Carlsbad Caverns,"Carlsbad, NM",,,required,Book the guided tour in advance
+Bandelier National Monument,"Los Alamos, NM",,,optional,Scenic trail
+Santa Fe Plaza,"Santa Fe, NM",35.6870,-105.9378,required,Coordinates are optional; addresses are looked up

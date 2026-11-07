@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  trips        Trip[]
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Trip {
+  id           String                @id @default(cuid())
+  ownerId      String
+  owner        User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name         String
+  notes        String                @default("")
+  startDate    DateTime?
+  durationDays Int?
+  preferences  Json                  @default("{}")
+  version      Int                   @default(1)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  stops        Stop[]
+  places       PlaceRecommendation[]
+  messages     ChatMessage[]
+  proposals    TripProposal[]
+  revisions    TripRevision[]
+
+  @@index([ownerId])
+}
+
+model Stop {
+  id           String   @id @default(cuid())
+  tripId       String
+  trip         Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  name         String
+  address      String   @default("")
+  latitude     Float
+  longitude    Float
+  sequence     Int
+  stopType     String
+  source       String
+  notes        String   @default("")
+  visitMinutes Int?
+  place        PlaceRecommendation?
+  createdAt    DateTime @default(now())
+
+  @@index([tripId, sequence])
+}
+
+model PlaceRecommendation {
+  id                   String   @id @default(cuid())
+  tripId               String
+  trip                 Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  externalId           String
+  name                 String
+  category             String
+  description          String   @default("")
+  address              String   @default("")
+  latitude             Float
+  longitude            Float
+  source               String
+  sourceUrl            String?
+  imageUrl             String?
+  imageSourceUrl       String?
+  imageAttribution     String?
+  imageLicense         String?
+  reason               String   @default("")
+  visitMinutes         Int?
+  detourDistanceMeters Int?
+  status               String   @default("suggested")
+  stopId               String?  @unique
+  stop                 Stop?    @relation(fields: [stopId], references: [id], onDelete: SetNull)
+  createdAt            DateTime @default(now())
+
+  @@unique([tripId, externalId])
+}
+
+model RouteCache {
+  key             String   @id
+  provider        String
+  distanceMeters  Float
+  durationSeconds Float
+  geometry        Json
+  createdAt       DateTime @default(now())
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  role      String
+  content   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([tripId, createdAt])
+}
+
+model TripProposal {
+  id         String   @id @default(cuid())
+  tripId     String
+  trip       Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  summary    String
+  operations Json
+  impact     Json
+  status     String   @default("pending")
+  createdAt  DateTime @default(now())
+
+  @@index([tripId, status])
+}
+
+model TripRevision {
+  id             String   @id @default(cuid())
+  tripId         String
+  trip           Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  revisionNumber Int
+  summary        String
+  snapshot       Json
+  createdAt      DateTime @default(now())
+
+  @@unique([tripId, revisionNumber])
+}

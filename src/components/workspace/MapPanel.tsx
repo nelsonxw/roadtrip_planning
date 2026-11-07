@@ -1,0 +1,201 @@
+"use client";
+
+import * as maplibre from "maplibre-gl";
+import type { GeoJSONSource, Map as MapLibreMap, Marker } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { useEffect, useRef, useState } from "react";
+import type { TripView } from "@/server/tripService";
+import type { Stop } from "@/domain/trip";
+
+const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE_URL || "https://tiles.openfreemap.org/styles/liberty";
+const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
+/** Visual language: shape and label carry the stop type, not colour alone. */
+const MARKER_CLASS: Record<Stop["stopType"], string> = {
+  origin: "rounded-sm bg-emerald-600 text-white",
+  destination: "rounded-sm rotate-45 bg-rose-600 text-white",
+  required: "rounded-full bg-sky-700 text-white border-2 border-white",
+  optional: "rounded-full bg-white text-sky-800 border-2 border-dashed border-sky-700",
+};
+const TYPE_LABEL: Record<Stop["stopType"], string> = { origin: "Start", destination: "Destination", required: "Required stop", optional: "Optional stop" };
+
+type Props = {
+  trip: TripView;
+  selectedStopId: string | null;
+  selectedPlaceId: string | null;
+  onSelectStop: (id: string) => void;
+  onSelectPlace: (id: string) => void;
+};
+
+function supportsWebGL(): boolean {
+  try {
+    const canvas = document.createElement("canvas");
+    return Boolean(canvas.getContext("webgl2") ?? canvas.getContext("webgl"));
+  } catch {
+    return false;
+  }
+}
+
+const SHORT_LABEL: Record<Stop["stopType"], string | null> = { origin: "S", destination: "E", required: null, optional: null };
+
+export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, onSelectPlace }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const markersRef = useRef(new Map<string, { marker: Marker; el: HTMLButtonElement }>());
+  const [mapReady, setMapReady] = useState(false);
+  // Without WebGL the map cannot render. Stops, itinerary and chat still work, so the page shows a message instead of failing.
+  const [webgl] = useState(supportsWebGL);
+  const fitKey = useRef<string>("");
+  const callbacks = useRef({ onSelectStop, onSelectPlace });
+  useEffect(() => {
+    callbacks.current = { onSelectStop, onSelectPlace };
+  }, [onSelectStop, onSelectPlace]);
+
+  useEffect(() => {
+    if (!containerRef.current || !webgl) return;
+    const markers = markersRef.current;
+    const map = new maplibre.Map({ container: containerRef.current, style: MAP_STYLE, center: [-98.5, 39.5], zoom: 3 });
+    map.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
+    mapRef.current = map;
+
+    map.on("load", () => {
+      map.addSource("route", { type: "geojson", data: EMPTY });
+      map.addSource("selected-leg", { type: "geojson", data: EMPTY });
+      map.addSource("places", { type: "geojson", data: EMPTY, cluster: true, clusterRadius: 40, clusterMaxZoom: 11 });
+      map.addLayer({ id: "route-line", type: "line", source: "route", paint: { "line-color": "#0284c7", "line-width": 4, "line-opacity": 0.85 } });
+      map.addLayer({ id: "selected-leg-line", type: "line", source: "selected-leg", paint: { "line-color": "#f97316", "line-width": 7 } });
+      map.addLayer({
+        id: "place-clusters",
+        type: "circle",
+        source: "places",
+        filter: ["has", "point_count"],
+        paint: { "circle-color": "#6d28d9", "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 30, 22], "circle-stroke-width": 2, "circle-stroke-color": "#ffffff" },
+      });
+      map.addLayer({ id: "place-cluster-count", type: "symbol", source: "places", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#ffffff" } });
+      map.addLayer({
+        id: "place-points",
+        type: "circle",
+        source: "places",
+        filter: ["!", ["has", "point_count"]],
+        paint: { "circle-color": ["match", ["get", "status"], "saved", "#059669", "#7c3aed"], "circle-radius": 7, "circle-stroke-width": 2, "circle-stroke-color": "#ffffff" },
+      });
+      map.on("click", "place-points", (event) => {
+        const id = event.features?.[0]?.properties?.id;
+        if (typeof id === "string") callbacks.current.onSelectPlace(id);
+      });
+      map.on("click", "place-clusters", (event) => {
+        const feature = event.features?.[0];
+        const source = map.getSource("places") as GeoJSONSource;
+        if (!feature || feature.geometry.type !== "Point" || feature.properties?.cluster_id === undefined) return;
+        source.getClusterExpansionZoom(feature.properties.cluster_id).then((zoom) => map.easeTo({ center: feature.geometry.type === "Point" ? (feature.geometry.coordinates as [number, number]) : map.getCenter(), zoom }));
+      });
+      for (const layer of ["place-clusters", "place-points"]) {
+        map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
+        map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
+      }
+      setMapReady(true);
+    });
+
+    return () => {
+      markers.forEach(({ marker }) => marker.remove());
+      markers.clear();
+      map.remove();
+      mapRef.current = null;
+      setMapReady(false);
+    };
+  }, [webgl]);
+
+  // Stops are rendered as HTML markers so they can be focusable buttons with accessible names.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const ordered = [...trip.stops].sort((a, b) => a.sequence - b.sequence);
+    const liveIds = new Set(ordered.map((stop) => stop.id));
+    markersRef.current.forEach((entry, id) => {
+      if (!liveIds.has(id)) {
+        entry.marker.remove();
+        markersRef.current.delete(id);
+      }
+    });
+    let intermediateNumber = 0;
+    ordered.forEach((stop) => {
+      const number = stop.stopType === "required" || stop.stopType === "optional" ? ++intermediateNumber : null;
+      const isSelected = stop.id === selectedStopId;
+      let entry = markersRef.current.get(stop.id);
+      if (!entry) {
+        const el = document.createElement("button");
+        el.type = "button";
+        el.addEventListener("click", () => callbacks.current.onSelectStop(stop.id));
+        const marker = new maplibre.Marker({ element: el, anchor: "center" }).setLngLat([stop.longitude, stop.latitude]).addTo(map);
+        entry = { marker, el };
+        markersRef.current.set(stop.id, entry);
+      }
+      entry.marker.setLngLat([stop.longitude, stop.latitude]);
+      entry.el.className = `flex h-7 min-w-7 items-center justify-center px-1 text-xs font-semibold shadow ${MARKER_CLASS[stop.stopType]} ${isSelected ? "ring-4 ring-amber-400" : ""}`;
+      entry.el.textContent = SHORT_LABEL[stop.stopType] ?? String(number);
+      entry.el.setAttribute("aria-label", `${TYPE_LABEL[stop.stopType]}${number ? ` ${number}` : ""}: ${stop.name}`);
+      entry.el.setAttribute("aria-pressed", String(isSelected));
+      entry.el.title = stop.name;
+    });
+  }, [trip.stops, selectedStopId, mapReady]);
+
+  // Route, selected segment, and places are GeoJSON sources updated in place.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const routeSource = map.getSource("route") as GeoJSONSource | undefined;
+    routeSource?.setData({
+      type: "FeatureCollection",
+      features: trip.legs.filter((leg) => leg.geometry.length > 1).map((leg) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: leg.geometry } })),
+    });
+    const selectedGeometry = trip.legs.filter((leg) => leg.fromStopId === selectedStopId || leg.toStopId === selectedStopId).flatMap((leg) => leg.geometry);
+    (map.getSource("selected-leg") as GeoJSONSource | undefined)?.setData(
+      selectedGeometry.length > 1 ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: selectedGeometry } }] } : EMPTY,
+    );
+    const visiblePlaces = trip.places.filter((place) => place.status !== "dismissed");
+    (map.getSource("places") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: visiblePlaces.map((place) => ({
+        type: "Feature",
+        properties: { id: place.id, status: place.status, name: place.name },
+        geometry: { type: "Point", coordinates: [place.longitude, place.latitude] },
+      })),
+    });
+  }, [trip.legs, trip.places, selectedStopId, mapReady]);
+
+  // Fit to the route when the set of stops changes, not on every edit, so the map does not jump while the user types notes.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || trip.stops.length === 0) return;
+    const key = trip.stops.map((stop) => stop.id).join("|");
+    if (key === fitKey.current) return;
+    fitKey.current = key;
+    const bounds = new maplibre.LngLatBounds();
+    trip.stops.forEach((stop) => bounds.extend([stop.longitude, stop.latitude]));
+    trip.routeGeometry.forEach((point) => bounds.extend(point as [number, number]));
+    map.fitBounds(bounds, { padding: 60, maxZoom: 9, duration: 500 });
+  }, [trip.stops, trip.routeGeometry, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !selectedPlaceId) return;
+    const place = trip.places.find((item) => item.id === selectedPlaceId);
+    if (place) map.easeTo({ center: [place.longitude, place.latitude], duration: 400 });
+  }, [selectedPlaceId, trip.places, mapReady]);
+
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full" role="region" aria-label="Trip map" />
+      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-white/95 p-2 text-[11px] text-slate-700 shadow">
+        <p className="font-semibold">Legend</p>
+        <p>■ Start · ◆ Destination · ● Required · ○ Optional</p>
+        <p>● Suggested place · ● Saved place · Route: blue</p>
+      </div>
+      {trip.modes.routing === "demo" && (
+        <div className="absolute left-3 top-3 rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900 shadow">DEMO ROUTING: distances and times are estimates, not live road data</div>
+      )}
+      {!webgl && <div role="alert" className="absolute inset-0 flex items-center justify-center bg-slate-100 p-6 text-center text-sm text-slate-700">The map cannot start in this browser (WebGL is unavailable). The itinerary and assistant still work.</div>}
+      {webgl && !mapReady && <div className="absolute inset-0 flex items-center justify-center bg-slate-100/70 text-sm text-slate-600">Loading map…</div>}
+    </div>
+  );
+}
