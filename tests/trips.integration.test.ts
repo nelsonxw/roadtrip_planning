@@ -32,6 +32,7 @@ const demoServices = () => ({
   routing: new m.demo.DemoRouting(),
   places: new m.demo.DemoPlaces(),
   images: new m.demo.DemoImages(),
+  assistantConfig: null,
   modes: { geocoding: "demo" as const, routing: "demo" as const, places: "demo" as const, assistant: "demo" as const },
 });
 
@@ -49,7 +50,6 @@ const addStop = (name: string, latitude: number, longitude: number, index?: numb
 });
 
 beforeAll(async () => {
-  process.loadEnvFile(".env.local");
   m = {
     db: (await import("@/lib/db")).db,
     tripService: await import("@/server/tripService"),
@@ -59,6 +59,8 @@ beforeAll(async () => {
     AppError: (await import("@/lib/errors")).AppError,
     ProviderError: (await import("@/lib/errors")).ProviderError,
   };
+  // Pin the app's services to demo providers so tests never call live APIs, even when keys are in .env.local.
+  (globalThis as unknown as { services: unknown }).services = demoServices();
 });
 
 afterAll(async () => {

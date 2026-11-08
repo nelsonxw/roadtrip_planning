@@ -39,7 +39,6 @@ export async function deleteSession(token: string) {
 /** Returns the signed-in user, or null. Session tokens are stored hashed, so a database leak does not expose live sessions. */
 export async function getCurrentUser() {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  console.log("DEBUG token present:", Boolean(token));
   if (!token) return null;
   const session = await db.session.findUnique({ where: { id: sha256(token) }, include: { user: true } });
   if (!session) return null;

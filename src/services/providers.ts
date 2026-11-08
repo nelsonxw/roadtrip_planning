@@ -11,6 +11,8 @@ export type Services = {
   routing: RoutingService;
   places: PlacesService;
   images: ImageService;
+  /** Null when no assistant key is set. The assistant then runs in demo mode. */
+  assistantConfig: { apiKey: string; model: string } | null;
   /** Reported in the UI so users always know whether results are live or demo data. */
   modes: { geocoding: ServiceMode; routing: ServiceMode; places: ServiceMode; assistant: ServiceMode };
 };
@@ -20,17 +22,19 @@ export function createServices(): Services {
   // Overpass and Wikimedia need no key, so places and images are live by default.
   const images = new WikimediaImageService(env.WIKIMEDIA_USER_AGENT);
   const routingKey = env.OPENROUTESERVICE_API_KEY;
+  const assistantConfig = env.GEMINI_API_KEY ? { apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL } : null;
 
   return {
     geocoding: routingKey ? new OpenRouteServiceGeocoding(routingKey) : new DemoGeocoding(),
     routing: routingKey ? new OpenRouteServiceRouting(routingKey) : new DemoRouting(),
     places: new OverpassPlacesService(env.OVERPASS_URL, images, env.WIKIMEDIA_USER_AGENT),
     images,
+    assistantConfig,
     modes: {
       geocoding: routingKey ? "live" : "demo",
       routing: routingKey ? "live" : "demo",
       places: "live",
-      assistant: env.ANTHROPIC_API_KEY && env.ANTHROPIC_MODEL ? "live" : "demo",
+      assistant: assistantConfig ? "live" : "demo",
     },
   };
 }

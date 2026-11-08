@@ -3,7 +3,8 @@ import { tripOperationSchema, type TripOperation } from "@/domain/trip";
 import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { getServices } from "@/services/providers";
-import { assertProposalNotStale, planFromMessage, simulateImpact, type ProposalImpact } from "./assistant";
+import { assertProposalNotStale, simulateImpact, type ProposalImpact } from "./assistant";
+import { planTripChange } from "./aiPlanner";
 import { applyTripChange, getTripView } from "./tripService";
 import { z } from "zod";
 
@@ -39,7 +40,8 @@ export async function handleChatMessage(input: { tripId: string; ownerId: string
   await requireOwnedTrip(input.tripId, input.ownerId);
   const services = getServices();
   const view = await getTripView(input.tripId, input.ownerId, services);
-  const plan = await planFromMessage(view, input.message, services);
+  const recent = await db.chatMessage.findMany({ where: { tripId: input.tripId }, orderBy: { createdAt: "desc" }, take: 6 });
+  const plan = await planTripChange(view, input.message, recent.reverse(), services);
 
   await db.chatMessage.create({ data: { tripId: input.tripId, role: "user", content: input.message } });
   let proposalId: string | null = null;
