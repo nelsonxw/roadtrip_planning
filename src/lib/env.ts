@@ -5,6 +5,7 @@ const optionalString = z.preprocess((value) => (value === "" ? undefined : value
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   OPENROUTESERVICE_API_KEY: optionalString,
+  GEOAPIFY_API_KEY: optionalString,
   OVERPASS_URL: z.preprocess(
     (value) => value || "https://overpass-api.de/api/interpreter",
     z.string().url(),

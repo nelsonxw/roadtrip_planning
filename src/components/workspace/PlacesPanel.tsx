@@ -33,7 +33,16 @@ export function PlacesPanel({ trip, selectedPlaceId, onSelectPlace, discover, se
           {discovering ? "Searching along your route..." : trip.places.length ? "Refresh places along route" : "Find places along route"}
         </button>
         <p className="text-xs text-slate-500">
-          Places come from OpenStreetMap, with text from Wikipedia and licensed Wikimedia Commons photos. Visit lengths are estimates. Opening hours are not shown because they are not verified.
+          Visit lengths are estimates. Photos appear only when a licensed image is available. Opening hours are not shown because they are not verified.
+        </p>
+        <p className="text-[11px] text-slate-500">
+          Place data © OpenStreetMap contributors.
+          {trip.places.some((p) => p.source.includes("Geoapify")) && (
+            <>
+              {" "}
+              <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer" className="underline">Powered by Geoapify</a>.
+            </>
+          )}
         </p>
         {trip.places.length > 0 && (
           <label className="block text-xs font-medium text-slate-700">

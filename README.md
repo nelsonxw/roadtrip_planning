@@ -32,7 +32,8 @@ All variables are read on the server. Only `NEXT_PUBLIC_MAP_STYLE_URL` is expose
 |---|---|---|
 | `DATABASE_URL` | yes | PostgreSQL connection string. |
 | `OPENROUTESERVICE_API_KEY` | no | Enables live geocoding, autocomplete, and driving routes. Without it, demo providers are used. |
-| `OVERPASS_URL` | no | OpenStreetMap Overpass endpoint. Defaults to the public instance. |
+| `GEOAPIFY_API_KEY` | no | Places along the route from Geoapify (free plan). Without it, the Overpass fallback is used. |
+| `OVERPASS_URL` | no | OpenStreetMap Overpass endpoint for the fallback. Defaults to the public instance. |
 | `WIKIMEDIA_USER_AGENT` | recommended | Identifying User-Agent with a contact address, required by Wikimedia policy. |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | no | Reserved for the language-model assistant. Not yet wired up; see limitations. |
 | `NEXT_PUBLIC_MAP_STYLE_URL` | no | MapLibre style. Defaults to a keyless OpenFreeMap style. |
@@ -41,7 +42,8 @@ All variables are read on the server. Only `NEXT_PUBLIC_MAP_STYLE_URL` is expose
 ## Provider configuration
 
 - **OpenRouteService (routing, geocoding):** create a free key at https://openrouteservice.org/dev/#/signup and set `OPENROUTESERVICE_API_KEY`. Free-tier quotas apply (check the current limits on the provider's dashboard; they change). Each leg is a separate two-point request, so waypoint limits never apply, and legs are cached in the `RouteCache` table.
-- **OpenStreetMap Overpass (places):** no key. Public servers have fair-use limits, so results are cached in memory for one hour. OSM data requires attribution (shown in the itinerary PDF).
+- **Geoapify (places, primary):** create a free key at https://myprojects.geoapify.com and set `GEOAPIFY_API_KEY`. The free plan is 3,000 credits a day (one credit per 20 places returned) and allows commercial use. Attribution is required and shown in the app and PDF: "© OpenStreetMap contributors" and "Powered by Geoapify". Each search is one request for the whole route. Geoapify returns no descriptions or photos, so those stay empty.
+- **OpenStreetMap Overpass (places, fallback):** used only when no Geoapify key is set. Public servers have fair-use limits and were unreliable from one network during development (HTTP 406, 504s, long responses). Set `OVERPASS_URL` to a reliable instance if you rely on it.
 - **Wikipedia and Wikimedia Commons (descriptions, photos):** no key. Photos are shown only when Commons metadata provides a licence; otherwise a neutral placeholder is shown.
 - **Anthropic (assistant):** not connected yet. The assistant runs in demo mode and is labelled as such.
 
@@ -83,7 +85,7 @@ node scripts/smoke-api.mjs http://localhost:3000   # API smoke test against a ru
 First time only, install the browser: `npx playwright install chromium`.
 
 Last recorded run:
-- **49 Vitest tests passing:** domain logic, provider adapters, stop-list import parsing and validation (including a real XLSX file), and database integration covering ownership, version conflicts, required-stop confirmation, undo, provider failure, proposal acceptance, and import ordering.
+- **68 Vitest tests passing** (including the Geoapify adapter: request shape, key placement, mapping, and error handling): domain logic, provider adapters, stop-list import parsing and validation (including a real XLSX file), the Gemini assistant planner (scripted model replies, coordinate guard, validation, rate-limit fallback), and database integration covering ownership, version conflicts, required-stop confirmation, undo, provider failure, proposal acceptance, and import ordering. Tests never call live APIs.
 - **7 Playwright tests passing:** sign-up, trip creation with autocomplete, add-and-remove through a confirmed proposal, itinerary-to-marker highlighting, CSV import with invalid rows, export downloads, cross-user access, and the signed-out redirect.
 - **18 API smoke checks passing.**
 - TypeScript, ESLint, and `next build` pass.
@@ -105,6 +107,7 @@ Last recorded run:
 - **Undo** restores only the most recent change, one step at a time.
 - **PDF** has no embedded photos, to keep exports fast and avoid fetching third-party images at export time. Source links and attributions are included.
 - **Accounts** are email and password only. There is no email verification or password reset yet.
+- **Place search is unverified against the live Geoapify API.** The adapter is unit-tested against mocked responses. Live verification needs a `GEOAPIFY_API_KEY`.
 - **Browser tests cover the main workflows in headless Chromium only.** Drag-and-drop is not offered (move buttons are used instead). Map rendering depends on WebGL and the style server; when WebGL is missing, the page shows a message and the itinerary still works. Tiles are not asserted in tests.
 - **Stop-list import:** the file's `sequence` column is ignored (file order is always kept). Address lookups are capped at 100 per import, and files are limited to 500 rows and 2 MB. In demo geocoding only a few sample cities resolve, so import with coordinates or a live key for real addresses.
 - **Local database:** on this machine, Docker and the PostgreSQL installer were unavailable, so development uses the `embedded-postgres` package (PostgreSQL 18). Production should use a managed PostgreSQL.
@@ -116,7 +119,7 @@ Last recorded run:
 - Origin and destination with autocomplete and explicit selection (no silent guessing).
 - Manual stop add, remove, reorder, edit (notes, visit length, required/optional), with stable IDs.
 - Driving route on the map with per-leg distance and time; legs recalculated only when affected.
-- Places along the route (OSM), with Wikipedia descriptions, licensed photos, source links, and category estimates.
+- Places along the route (OSM), with Wikipedia descriptions, licensed photos, source links, and category estimates. Built and unit-tested; live place search needs a reliable Overpass instance (see provider notes).
 - Clustered places, marker shapes distinct from colour, click-to-highlight in both directions.
 - Day-by-day itinerary with drive totals, overnight stops, rest days, and warnings for unrealistic duration or packed days.
 - Required-stop removal requires explicit confirmation (UI and server).

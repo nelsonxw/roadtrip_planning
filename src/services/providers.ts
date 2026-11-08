@@ -1,6 +1,7 @@
 import { env } from "@/lib/env";
 import { DemoGeocoding, DemoRouting } from "./demo/demoServices";
 import { OpenRouteServiceGeocoding } from "./geocoding/openrouteservice";
+import { GeoapifyPlacesService } from "./places/geoapify";
 import { OverpassPlacesService } from "./places/overpass";
 import { OpenRouteServiceRouting } from "./routing/openrouteservice";
 import { WikimediaImageService } from "./images/wikimedia";
@@ -27,7 +28,7 @@ export function createServices(): Services {
   return {
     geocoding: routingKey ? new OpenRouteServiceGeocoding(routingKey) : new DemoGeocoding(),
     routing: routingKey ? new OpenRouteServiceRouting(routingKey) : new DemoRouting(),
-    places: new OverpassPlacesService(env.OVERPASS_URL, images, env.WIKIMEDIA_USER_AGENT),
+    places: env.GEOAPIFY_API_KEY ? new GeoapifyPlacesService(env.GEOAPIFY_API_KEY) : new OverpassPlacesService(env.OVERPASS_URL, images, env.WIKIMEDIA_USER_AGENT),
     images,
     assistantConfig,
     modes: {

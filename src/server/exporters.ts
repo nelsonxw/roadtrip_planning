@@ -112,7 +112,7 @@ export function buildItineraryPdf(view: TripView, generatedAt: Date): Promise<Bu
     }
 
     doc.font("Helvetica").fontSize(8).fillColor("#64748b").text(
-      "Place data: OpenStreetMap contributors (ODbL). Descriptions: Wikipedia (CC BY-SA). Visit lengths and times are estimates. Opening hours are not verified. Routing estimates come from the configured routing provider.",
+      `Place data: © OpenStreetMap contributors (ODbL).${view.places.some((p) => p.source.includes("Geoapify")) ? " Powered by Geoapify." : ""} Visit lengths and times are estimates. Opening hours are not verified. Routing estimates come from the configured routing provider.`,
     );
     doc.end();
   });
