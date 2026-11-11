@@ -3,7 +3,7 @@ import { tripOperationSchema, type TripOperation } from "@/domain/trip";
 import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { getServices } from "@/services/providers";
-import { assertProposalNotStale, simulateImpact, type ProposalImpact } from "./assistant";
+import { assertProposalNotStale, checkProposalShape, simulateImpact, type ProposalImpact } from "./assistant";
 import { planTripChange } from "./aiPlanner";
 import { applyTripChange, getTripView } from "./tripService";
 import { z } from "zod";
@@ -45,6 +45,11 @@ export async function handleChatMessage(input: { tripId: string; ownerId: string
 
   await db.chatMessage.create({ data: { tripId: input.tripId, role: "user", content: input.message } });
   let proposalId: string | null = null;
+  const shapeProblem = checkProposalShape(plan.summary, plan.operations);
+  if (shapeProblem) {
+    await db.chatMessage.create({ data: { tripId: input.tripId, role: "assistant", content: shapeProblem } });
+    return listChat(input.tripId, input.ownerId);
+  }
   if (plan.operations.length) {
     const impact = await simulateImpact(view, plan.operations, services);
     const proposal = await db.tripProposal.create({

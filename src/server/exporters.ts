@@ -5,10 +5,12 @@ import type { TripView } from "./tripService";
 
 /** Exports are built from the saved trip state the caller loaded, so they always match the latest itinerary. */
 
-const TYPE_LABEL: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional" };
+const TYPE_LABEL: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional", return: "Return to start" };
+const METERS_PER_MILE = 1609.344;
 const CSV_COLUMNS = [
-  "day", "date", "order", "stop", "type", "source", "address", "latitude", "longitude", "drive_from_previous_km", "drive_from_previous_min",
-  "route_status", "visit_minutes", "visit_minutes_is_estimate", "overnight", "notes", "generated_at",
+  "day", "date", "leg", "start_location", "end_location",
+  "end_type", "end_source", "end_address", "drive_miles", "drive_min", "route_status", "visit_minutes", "visit_minutes_is_estimate",
+  "overnight", "notes", "generated_at",
 ];
 
 /**
@@ -24,32 +26,50 @@ export function neutralizeFormulas(row: Record<string, unknown>): Record<string,
   return output;
 }
 
+/**
+ * One row per driving leg: start location and end location, in route order. Each leg belongs to the
+ * day on which it is driven, which is the day the end stop is first reached by car. Rest days have no legs.
+ */
 export function buildItineraryCsv(view: TripView, generatedAt: Date): string {
   const stopsById = new Map(view.stops.map((stop) => [stop.id, stop]));
-  const rows = view.itinerary.days.flatMap((day) =>
-    day.items.map((item, index) => {
-      const stop = stopsById.get(item.stopId)!;
-      return {
+  const legInfoByEndStop = new Map<string, { day: number; date: string; overnight: boolean; visitMinutes: number; visitIsEstimate: boolean }>();
+  for (const day of view.itinerary.days) {
+    for (const item of day.items) {
+      if (!item.fromPrevious || legInfoByEndStop.has(item.stopId)) continue;
+      legInfoByEndStop.set(item.stopId, {
         day: day.dayNumber,
         date: day.date ?? "",
-        order: index + 1,
-        stop: stop.name,
-        type: TYPE_LABEL[stop.stopType] ?? stop.stopType,
-        source: stop.source,
-        address: stop.address,
-        latitude: stop.latitude,
-        longitude: stop.longitude,
-        drive_from_previous_km: item.fromPrevious ? (item.fromPrevious.distanceMeters / 1000).toFixed(1) : "",
-        drive_from_previous_min: item.fromPrevious ? Math.round(item.fromPrevious.durationSeconds / 60) : "",
-        route_status: item.fromPrevious ? item.fromPrevious.status : "",
-        visit_minutes: item.visitMinutes,
-        visit_minutes_is_estimate: item.visitMinutesIsEstimate ? "yes" : "no",
-        overnight: day.overnightStopId === stop.id ? "yes" : "no",
-        notes: stop.notes,
-        generated_at: generatedAt.toISOString(),
-      };
-    }),
-  );
+        overnight: day.overnightStopId === item.stopId,
+        visitMinutes: item.visitMinutes,
+        visitIsEstimate: item.visitMinutesIsEstimate,
+      });
+    }
+  }
+
+  const rows = view.legs.map((leg, index) => {
+    const start = stopsById.get(leg.fromStopId)!;
+    const end = stopsById.get(leg.toStopId)!;
+    const info = legInfoByEndStop.get(end.id);
+    const routed = leg.status === "ok";
+    return {
+      day: info?.day ?? "",
+      date: info?.date ?? "",
+      leg: index + 1,
+      start_location: start.name,
+      end_location: end.name,
+      end_type: TYPE_LABEL[end.stopType] ?? end.stopType,
+      end_source: end.source,
+      end_address: end.address,
+      drive_miles: routed ? (leg.distanceMeters / METERS_PER_MILE).toFixed(1) : "",
+      drive_min: routed ? Math.round(leg.durationSeconds / 60) : "",
+      route_status: leg.status,
+      visit_minutes: info?.visitMinutes ?? "",
+      visit_minutes_is_estimate: info ? (info.visitIsEstimate ? "yes" : "no") : "",
+      overnight: info?.overnight ? "yes" : "no",
+      notes: end.notes,
+      generated_at: generatedAt.toISOString(),
+    };
+  });
   return stringify(rows.map(neutralizeFormulas), { header: true, columns: CSV_COLUMNS });
 }
 

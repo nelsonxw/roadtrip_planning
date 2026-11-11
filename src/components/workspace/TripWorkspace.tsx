@@ -5,6 +5,7 @@ import type { PlaceView } from "@/server/tripService";
 import { useTrip } from "./useTrip";
 import { MapPanel } from "./MapPanel";
 import { ItineraryPanel } from "./ItineraryPanel";
+import { OvernightSuggestions } from "./OvernightSuggestions";
 import { PlacesPanel } from "./PlacesPanel";
 import { ChatPanel } from "./ChatPanel";
 
@@ -87,6 +88,10 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
           </div>
           <div className="min-h-0 flex-1">
             {sidePanel === "itinerary" ? (
+              <>
+                <div className="p-4 pb-0">
+                  <OvernightSuggestions tripId={tripId} version={current.version} onAccepted={() => trip.reload()} />
+                </div>
               <ItineraryPanel
                 trip={current}
                 selectedStopId={selectedStopId}
@@ -94,7 +99,9 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
                 apply={applyAndSelect}
                 commitImport={trip.commitImport}
                 confirmRemove={(name) => window.confirm(`"${name}" is a required stop. Remove it from the trip?`)}
+                retryRoutes={() => trip.reload().catch(() => undefined)}
               />
+              </>
             ) : (
               <PlacesPanel
                 trip={current}

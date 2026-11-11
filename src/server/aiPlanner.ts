@@ -42,6 +42,7 @@ const PROPOSE_CHANGE: FunctionDeclaration = {
             latitude: { type: "NUMBER", description: "Must come from a find_location result" },
             longitude: { type: "NUMBER", description: "Must come from a find_location result" },
             required: { type: "BOOLEAN", description: "true only if the user said the stop must be kept" },
+            leg: { type: "STRING", enum: ["outbound", "return"], description: "'return' when the user mentions the return trip, the way back, or coming home; otherwise 'outbound'" },
             to_index: { type: "INTEGER", description: "Position among intermediate stops, starting at 0" },
             minutes: { type: "INTEGER", description: "Daily driving limit in minutes, 60 to 900" },
           },
@@ -60,6 +61,7 @@ type ProposedAction = {
   latitude?: number;
   longitude?: number;
   required?: boolean;
+  leg?: "outbound" | "return";
   to_index?: number;
   minutes?: number;
 };
@@ -73,6 +75,8 @@ export function buildSystemPrompt(view: TripView): string {
     "1. Never invent distances, drive times, opening hours, place details, photos or coordinates. Use only numbers from the trip summary and from find_location results.",
     "2. To change the trip, call propose_change. Nothing changes until the user accepts. Never say a change was made or applied.",
     "3. Call find_location before proposing any new stop. Only add places it returned.",
+    "3a. If the user asks for a stop on the return trip, the way back, or coming home, set leg to 'return'. Otherwise use 'outbound'. Do not ask about this when the wording makes it clear.",
+    "3b. A replacement ('replace X with Y', 'swap X for Y') is two actions in one propose_change call: remove_stop for X (stop_id from the trip summary) and add_stop for Y. Never describe a replacement with only one of them.",
     "4. Ask one short question only when essential information is missing.",
     "5. Keep replies under 80 words.",
     "6. Driving times are estimates from the route source given below. They exclude breaks, traffic and time at stops.",
@@ -114,14 +118,14 @@ export function toOperations(actions: ProposedAction[], view: TripView, candidat
           dropped.push(`"${action.name ?? "a stop"}" was not found by a location search`);
           continue;
         }
-        candidate = { type: "add_stop", name: match.name || action.name || match.label, address: match.label, latitude: match.latitude, longitude: match.longitude, stopType: action.required ? "required" : "optional", source: "ai", notes: "", visitMinutes: null };
+        candidate = { type: "add_stop", name: match.name || action.name || match.label, address: match.label, latitude: match.latitude, longitude: match.longitude, stopType: action.required ? "required" : "optional", leg: action.leg === "return" ? "return" : "outbound", source: "ai", notes: "", visitMinutes: null };
         break;
       }
       case "remove_stop":
         candidate = stopIds.has(action.stop_id ?? "") ? { type: "remove_stop", stopId: action.stop_id, confirmRequired: false } : null;
         break;
       case "move_stop":
-        candidate = stopIds.has(action.stop_id ?? "") && Number.isInteger(action.to_index) ? { type: "move_stop", stopId: action.stop_id, toIndex: action.to_index } : null;
+        candidate = stopIds.has(action.stop_id ?? "") && Number.isInteger(action.to_index) ? { type: "move_stop", stopId: action.stop_id, toIndex: action.to_index, leg: action.leg } : null;
         break;
       case "optimize_order":
         candidate = { type: "optimize_order" };

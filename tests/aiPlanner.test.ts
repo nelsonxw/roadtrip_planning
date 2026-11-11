@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { planTripChange, planWithModel, toOperations } from "@/server/aiPlanner";
 import type { TripView } from "@/server/tripService";
-import type { GeminiContent, GenerateFn } from "@/services/assistant/gemini";
+import { createGeminiGenerator, type GeminiContent, type GenerateFn } from "@/services/assistant/gemini";
 import type { Services } from "@/services/providers";
 import { DemoRouting, DemoPlaces, DemoImages } from "@/services/demo/demoServices";
 
@@ -152,6 +152,29 @@ describe("planWithModel", () => {
     });
     expect(plan.operations).toEqual([]);
     expect(plan.reply).toMatch(/could not finish/);
+  });
+});
+
+describe("Gemini client", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("retries a brief 503 and returns the model's answer", async () => {
+    const answer = { candidates: [{ content: { role: "model", parts: [{ text: "Hi" }] } }] };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(answer), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const reply = await createGeminiGenerator("k", "gemini-3.5-flash")({ systemInstruction: "s", contents: [], tools: [] });
+    expect(reply.parts[0].text).toBe("Hi");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry rate limits", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(createGeminiGenerator("k", "m")({ systemInstruction: "s", contents: [], tools: [] })).rejects.toMatchObject({ kind: "rate_limited" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -60,10 +60,20 @@ export type PlaceSearchOptions = {
   categories?: string[];
 };
 
+export type SettlementCandidate = {
+  externalId: string;
+  name: string;
+  kind: "city" | "town" | "village";
+  latitude: number;
+  longitude: number;
+};
+
 export interface PlacesService {
   readonly provider: string;
   readonly mode: ServiceMode;
   searchAlongRoute(routeGeometry: LngLat[], options: PlaceSearchOptions): Promise<PlaceCandidate[]>;
+  /** Cities, towns and villages near the route. Optional: not every provider can list settlements. */
+  searchSettlements?(routeGeometry: LngLat[], radiusMeters: number): Promise<SettlementCandidate[]>;
 }
 
 export type ImageInfo = {

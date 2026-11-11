@@ -21,17 +21,29 @@ function signed(value: number, unit: "time" | "distance") {
 
 export function ChatPanel({ messages, busy, send, decide }: Props) {
   const [draft, setDraft] = useState("");
+  const [waitingSeconds, setWaitingSeconds] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages.length]);
+  }, [messages.length, waitingSeconds]);
+
+  useEffect(() => {
+    if (waitingSeconds === null) return;
+    const timer = setTimeout(() => setWaitingSeconds((seconds) => (seconds === null ? null : seconds + 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [waitingSeconds]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || busy) return;
-    if (await send(text)) setDraft("");
+    if (!text || busy || waitingSeconds !== null) return;
+    setWaitingSeconds(0);
+    try {
+      if (await send(text)) setDraft("");
+    } finally {
+      setWaitingSeconds(null);
+    }
   }
 
   return (
@@ -48,6 +60,13 @@ export function ChatPanel({ messages, busy, send, decide }: Props) {
             {message.proposal && <ProposalCard proposal={message.proposal} busy={busy} decide={decide} />}
           </div>
         ))}
+        {waitingSeconds !== null && (
+          <div role="status" className="mr-6 flex items-center gap-2 rounded-lg bg-slate-100 p-3 text-sm text-slate-600">
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-sky-600" aria-hidden="true" />
+            Assistant is thinking… {waitingSeconds}s
+            {waitingSeconds >= 20 && <span className="block text-xs text-slate-500">This can take up to a minute. If it doesn&apos;t finish, you&apos;ll get a notice and the rule-based helper will answer.</span>}
+          </div>
+        )}
       </div>
       <div className="border-t border-slate-200 p-3">
         <div className="mb-2 flex flex-wrap gap-1.5">
@@ -60,7 +79,7 @@ export function ChatPanel({ messages, busy, send, decide }: Props) {
         <form onSubmit={submit} className="flex gap-2">
           <label htmlFor="chat-input" className="sr-only">Message the trip assistant</label>
           <input id="chat-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={1000} placeholder="e.g. add Santa Fe" className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-          <button type="submit" disabled={busy || !draft.trim()} className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
+          <button type="submit" disabled={busy || waitingSeconds !== null || !draft.trim()} className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
             Send
           </button>
         </form>
@@ -77,6 +96,13 @@ function ProposalCard({ proposal, busy, decide }: { proposal: ProposalView; busy
     <section aria-label={`Proposal: ${proposal.summary}`} className="mt-3 rounded-lg border border-slate-300 bg-white p-3 text-slate-800">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Proposed change · {proposal.status}</p>
       <p className="font-medium">{proposal.summary}</p>
+      {impact.steps && impact.steps.length > 0 && (
+        <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-xs text-slate-800" aria-label="Changes in this proposal">
+          {impact.steps.map((step, index) => (
+            <li key={`${index}-${step}`}>{step}</li>
+          ))}
+        </ol>
+      )}
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
         <dt className="text-slate-500">Driving change</dt>
         <dd>{signed(impact.deltaDriveSeconds, "time")} (provider estimate)</dd>

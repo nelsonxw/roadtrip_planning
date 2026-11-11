@@ -55,11 +55,11 @@ describe("applyOperations", () => {
     const stops = [stop("origin", "origin", 30.27, -97.74, 0), stop("lunch", "required", 30.5, -98.0, 1), stop("gallery", "optional", 31, -100, 2), stop("destination", "destination", 39.74, -104.99, 3)];
     const result = applyOperations({ stops, preferences: DEFAULT_PREFERENCES }, [{ type: "remove_stop", stopId: "gallery", confirmRequired: false }]);
     expect(result.stops.map((s) => s.id)).not.toContain("gallery");
-    expect(() => applyOperations({ stops, preferences: DEFAULT_PREFERENCES }, [{ type: "remove_stop", stopId: "origin", confirmRequired: true }])).toThrow(/not removed/);
+    expect(() => applyOperations({ stops, preferences: DEFAULT_PREFERENCES }, [{ type: "remove_stop", stopId: "origin", confirmRequired: true }])).toThrow(/cannot be removed/);
   });
 
   it("moves stops by index among intermediate stops", () => {
-    const stops = [...baseStops(), stop("a", "optional", 31, -100, 2), stop("b", "optional", 32, -101, 3)];
+    const stops = [stop("origin", "origin", 30.27, -97.74, 0), stop("lunch", "required", 30.5, -98.0, 1), stop("a", "optional", 31, -100, 2), stop("b", "optional", 32, -101, 3), stop("destination", "destination", 39.74, -104.99, 4)];
     const result = applyOperations({ stops, preferences: DEFAULT_PREFERENCES }, [{ type: "move_stop", stopId: "b", toIndex: 0 }]);
     expect(result.stops.map((s) => s.id)).toEqual(["origin", "b", "lunch", "a", "destination"]);
   });
@@ -85,7 +85,7 @@ describe("applyOperations", () => {
 
 describe("nearestNeighborOrder", () => {
   it("keeps endpoints fixed", () => {
-    const ordered = nearestNeighborOrder([...baseStops(), stop("x", "optional", 31, -100, 2)]);
+    const ordered = nearestNeighborOrder([stop("origin", "origin", 30.27, -97.74, 0), stop("x", "optional", 31, -100, 1), stop("destination", "destination", 39.74, -104.99, 2)]);
     expect(ordered[0].stopType).toBe("origin");
     expect(ordered[ordered.length - 1].stopType).toBe("destination");
   });

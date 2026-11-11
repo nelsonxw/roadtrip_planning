@@ -26,6 +26,15 @@ describe("OpenRouteService routing adapter", () => {
     expect(JSON.parse(init.body as string).options.avoid_features).toEqual(["tollways"]);
   });
 
+  it("asks the router to snap each stop to a road within 5 km", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({ features: [{ geometry: { coordinates: [[0, 0], [1, 1]] }, properties: { summary: { distance: 1, duration: 1 } } }] }),
+    );
+    await new OpenRouteServiceRouting("k").route([0, 0], [1, 1], { preference: "fastest", avoid: [] });
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).radiuses).toEqual([5000, 5000]);
+  });
+
   it("reports rate limits as a ProviderError the UI can explain", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response("", { status: 429 }));
     const error = await new OpenRouteServiceRouting("k").route([0, 0], [1, 1], { preference: "fastest", avoid: [] }).catch((e) => e);

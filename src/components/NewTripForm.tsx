@@ -11,12 +11,17 @@ export function NewTripForm() {
   const [destination, setDestination] = useState<ChosenPlace | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [tripType, setTripType] = useState<"oneWay" | "roundTrip" | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     if (!origin || !destination) {
       setError("Choose both the start and the destination from the search results.");
+      return;
+    }
+    if (!tripType) {
+      setError("Choose One way or Round trip.");
       return;
     }
     const days = Number(form.get("durationDays"));
@@ -27,6 +32,7 @@ export function NewTripForm() {
         name: String(form.get("name") || `${origin.name} to ${destination.name}`),
         startDate: String(form.get("startDate") || "") || null,
         durationDays: days > 0 ? days : null,
+        roundTrip: tripType === "roundTrip",
         origin: { name: origin.name, address: origin.label, latitude: origin.latitude, longitude: origin.longitude },
         destination: { name: destination.name, address: destination.label, latitude: destination.latitude, longitude: destination.longitude },
       });
@@ -41,6 +47,18 @@ export function NewTripForm() {
     <form onSubmit={submit} className="mt-4 space-y-4">
       <PlaceSearch label="Start" onChoose={setOrigin} />
       <PlaceSearch label="Destination" onChoose={setDestination} />
+      <fieldset className="text-sm">
+        <legend className="mb-1 font-medium text-slate-700">Trip type</legend>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name="trip-type" checked={tripType === "oneWay"} onChange={() => setTripType("oneWay")} /> One way
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name="trip-type" checked={tripType === "roundTrip"} onChange={() => setTripType("roundTrip")} /> Round trip
+          </label>
+        </div>
+        {tripType === "roundTrip" && <p className="mt-1 text-xs text-slate-500">The route returns to the start point at the end.</p>}
+      </fieldset>
       <label className="block text-sm font-medium text-slate-700">
         Trip name (optional)
         <input name="name" maxLength={120} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />

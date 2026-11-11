@@ -15,6 +15,7 @@ type Props = {
   apply: (operations: TripOperation[], summary: string) => Promise<boolean>;
   commitImport: (rows: ImportCommitRow[]) => Promise<boolean>;
   confirmRemove: (stopName: string) => boolean;
+  retryRoutes: () => Promise<void>;
 };
 
 const TYPE_BADGE: Record<string, string> = {
@@ -22,13 +23,17 @@ const TYPE_BADGE: Record<string, string> = {
   destination: "bg-rose-100 text-rose-800",
   required: "bg-sky-100 text-sky-900",
   optional: "bg-white text-sky-900 ring-1 ring-sky-300",
+  return: "bg-slate-200 text-slate-800",
   poi: "bg-violet-100 text-violet-800",
 };
-const TYPE_TEXT: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional" };
+const TYPE_TEXT: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional", return: "Return to start" };
 
-export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, commitImport, confirmRemove }: Props) {
+export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, commitImport, confirmRemove, retryRoutes }: Props) {
   const [chosen, setChosen] = useState<ChosenPlace | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const roundTrip = trip.stops.some((stop) => stop.stopType === "return");
   const [addType, setAddType] = useState<"required" | "optional">("required");
+  const [addLeg, setAddLeg] = useState<"outbound" | "return">("outbound");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const stopsById = new Map(trip.stops.map((stop) => [stop.id, stop]));
@@ -38,7 +43,7 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
     if (!chosen) return;
     setAdding(true);
     const ok = await apply(
-      [{ type: "add_stop", name: chosen.name, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude, stopType: addType, source: "user", notes: "", visitMinutes: null }],
+      [{ type: "add_stop", name: chosen.name, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude, stopType: addType, leg: addLeg, source: "user", notes: "", visitMinutes: null }],
       `Added ${chosen.name}`,
     );
     setAdding(false);
@@ -67,6 +72,13 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
             Import a stop list (CSV or XLSX)
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => apply([{ type: "set_round_trip", enabled: !roundTrip }], roundTrip ? "Changed to one way" : "Changed to round trip")}
+          className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+        >
+          {roundTrip ? "Trip is round trip. Make it one way" : "Trip is one way. Make it round trip"}
+        </button>
         <h2 className="text-base font-semibold text-slate-900">Add a stop</h2>
         <PlaceSearch label="Search a place" onChoose={setChosen} />
         <fieldset className="flex gap-4 text-sm">
@@ -76,6 +88,15 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
           </label>
           <label className="flex items-center gap-1.5">
             <input type="radio" name="stop-type" checked={addType === "optional"} onChange={() => setAddType("optional")} /> Optional
+          </label>
+        </fieldset>
+        <fieldset className="flex gap-4 text-sm">
+          <legend className="sr-only">Leg of the trip</legend>
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name="stop-leg" checked={addLeg === "outbound"} onChange={() => setAddLeg("outbound")} /> Outbound
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name="stop-leg" checked={addLeg === "return"} onChange={() => setAddLeg("return")} /> Return trip
           </label>
         </fieldset>
         <button type="button" disabled={!chosen || adding} onClick={addStop} className="w-full rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
@@ -95,6 +116,18 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
           <div role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">
             <p className="font-medium">Some routes could not be calculated. Your stops were saved.</p>
             <ul className="mt-1 list-disc pl-5">{trip.routeErrors.map((e) => <li key={e}>{e}</li>)}</ul>
+            <button
+              type="button"
+              disabled={retrying}
+              onClick={async () => {
+                setRetrying(true);
+                await retryRoutes();
+                setRetrying(false);
+              }}
+              className="mt-2 rounded-lg border border-rose-300 bg-white px-3 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-50"
+            >
+              {retrying ? "Retrying..." : "Retry route calculation"}
+            </button>
           </div>
         )}
         <p className="text-xs text-slate-500">

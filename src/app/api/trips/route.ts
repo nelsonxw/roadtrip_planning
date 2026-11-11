@@ -14,6 +14,7 @@ const createSchema = z.object({
   notes: z.string().max(2000).optional(),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   durationDays: z.number().int().min(1).max(60).nullable().optional(),
+  roundTrip: z.boolean().default(false),
   origin: endpoint,
   destination: endpoint,
 });

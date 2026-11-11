@@ -54,7 +54,7 @@ function addDays(isoDate: string, days: number): string {
 }
 
 function visitFor(stop: Stop) {
-  if (stop.stopType === "origin") return { minutes: 0, estimate: false };
+  if (stop.stopType === "origin" || stop.stopType === "return") return { minutes: 0, estimate: false };
   if (stop.visitMinutes === null) return { minutes: DEFAULT_VISIT_MINUTES, estimate: true };
   return { minutes: stop.visitMinutes, estimate: false };
 }

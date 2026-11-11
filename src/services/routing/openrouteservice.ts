@@ -4,6 +4,7 @@ import { fetchProviderJson } from "@/lib/http";
 import type { RouteLeg, RoutingOptions, RoutingService } from "../types";
 
 const BASE_URL = "https://api.openrouteservice.org";
+const SNAP_RADIUS_METERS = 5000;
 
 type ORSDirectionsResponse = {
   features?: {
@@ -22,6 +23,8 @@ export class OpenRouteServiceRouting implements RoutingService {
   async route(from: LngLat, to: LngLat, options: RoutingOptions): Promise<RouteLeg> {
     const body = {
       coordinates: [from, to],
+      // Snap each point to a road within 5 km; stops in parks or fields are often not on a road.
+      radiuses: [SNAP_RADIUS_METERS, SNAP_RADIUS_METERS],
       preference: options.preference,
       ...(options.avoid.length ? { options: { avoid_features: options.avoid } } : {}),
     };

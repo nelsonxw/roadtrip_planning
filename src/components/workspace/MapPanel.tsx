@@ -16,8 +16,9 @@ const MARKER_CLASS: Record<Stop["stopType"], string> = {
   destination: "rounded-sm rotate-45 bg-rose-600 text-white",
   required: "rounded-full bg-sky-700 text-white border-2 border-white",
   optional: "rounded-full bg-white text-sky-800 border-2 border-dashed border-sky-700",
+  return: "rounded-sm bg-slate-700 text-white",
 };
-const TYPE_LABEL: Record<Stop["stopType"], string> = { origin: "Start", destination: "Destination", required: "Required stop", optional: "Optional stop" };
+const TYPE_LABEL: Record<Stop["stopType"], string> = { origin: "Start", destination: "Destination", required: "Required stop", optional: "Optional stop", return: "Return to start" };
 
 type Props = {
   trip: TripView;
@@ -36,7 +37,11 @@ function supportsWebGL(): boolean {
   }
 }
 
-const SHORT_LABEL: Record<Stop["stopType"], string | null> = { origin: "S", destination: "E", required: null, optional: null };
+// MapLibre runs its tile and style work in a web worker. The bundler moves the default worker URL, so
+// the worker file is served from /public and set explicitly. Without this the map never reports "loaded".
+maplibre.setWorkerUrl("/maplibre-gl-worker.mjs");
+
+const SHORT_LABEL: Record<Stop["stopType"], string | null> = { origin: "S", destination: "E", required: null, optional: null, return: "R" };
 
 export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, onSelectPlace }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -123,10 +128,13 @@ export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, 
       const isSelected = stop.id === selectedStopId;
       let entry = markersRef.current.get(stop.id);
       if (!entry) {
+        // MapLibre positions the wrapper, so the wrapper is never restyled. The styled button sits inside it.
+        const wrapper = document.createElement("div");
         const el = document.createElement("button");
         el.type = "button";
         el.addEventListener("click", () => callbacks.current.onSelectStop(stop.id));
-        const marker = new maplibre.Marker({ element: el, anchor: "center" }).setLngLat([stop.longitude, stop.latitude]).addTo(map);
+        wrapper.appendChild(el);
+        const marker = new maplibre.Marker({ element: wrapper, anchor: "center" }).setLngLat([stop.longitude, stop.latitude]).addTo(map);
         entry = { marker, el };
         markersRef.current.set(stop.id, entry);
       }

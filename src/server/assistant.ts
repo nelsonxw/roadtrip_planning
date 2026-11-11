@@ -19,7 +19,44 @@ export type ProposalImpact = {
   deltaDistanceMeters: number;
   notes: string[];
   routeErrors: string[];
+  /** Plain-word description of each change, shown to the user before they accept. */
+  steps?: string[];
 };
+
+/** Describes one operation in words the user can check, using the current stop names. */
+export function describeOperation(operation: TripOperation, stops: Stop[]): string {
+  const nameOf = (stopId: string) => stops.find((stop) => stop.id === stopId)?.name ?? "a stop";
+  switch (operation.type) {
+    case "add_stop":
+      return `Add ${operation.name} to the ${operation.leg === "return" ? "return trip" : "outbound trip"}`;
+    case "remove_stop":
+      return `Remove ${nameOf(operation.stopId)}`;
+    case "move_stop":
+      return `Move ${nameOf(operation.stopId)} to position ${operation.toIndex + 1}${operation.leg ? ` on the ${operation.leg === "return" ? "return trip" : "outbound trip"}` : ""}`;
+    case "update_stop":
+      return `Update ${nameOf(operation.stopId)}`;
+    case "optimize_order":
+      return "Reorder stops to shorten the route";
+    case "set_round_trip":
+      return operation.enabled ? "Add the return to the start point" : "Remove the return to the start point";
+    case "set_preferences":
+      return operation.maxDailyDriveMinutes ? `Set the daily driving limit to ${(operation.maxDailyDriveMinutes / 60).toFixed(1).replace(/\.0$/, "")} hours` : "Update travel preferences";
+  }
+}
+
+const REPLACEMENT_WORDS = /\b(replace|replacing|replaces|swap|swapping|substitute|instead of)\b/i;
+
+/**
+ * A replacement ("replace X with Y") is one removal and one addition. A proposal that claims a
+ * replacement but lacks either part would leave the user thinking a change happened when it did not.
+ */
+export function checkProposalShape(summary: string, operations: TripOperation[]): string | null {
+  if (!REPLACEMENT_WORDS.test(summary)) return null;
+  const removals = operations.filter((operation) => operation.type === "remove_stop").length;
+  const additions = operations.filter((operation) => operation.type === "add_stop").length;
+  if (removals > 0 && additions > 0) return null;
+  return "That would replace a stop, but my proposal was missing the removal or the new stop, so I have not proposed it and nothing changed. Please ask again, naming the stop to remove and the stop to add.";
+}
 
 const HELP =
   "I can add or remove stops, reorder them, or lower your daily driving limit. Try \"add Santa Fe\", \"remove Lunch stop\", or \"reduce daily driving\". Changes are only applied after you accept them.";
@@ -109,6 +146,7 @@ export async function simulateImpact(view: Pick<TripView, "stops" | "preferences
     deltaDistanceMeters: afterTotals.distanceMeters - before.distanceMeters,
     notes: ["Driving times come from the routing provider and exclude breaks, traffic and time at stops."],
     routeErrors: after.errors,
+    steps: operations.map((operation) => describeOperation(operation, view.stops)),
   };
 }
 

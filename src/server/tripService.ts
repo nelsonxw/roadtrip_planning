@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, Stop as StopRow, Trip as TripRow, PlaceRecommendation as PlaceRow } from "@prisma/client";
 import { buildItinerary, type ItineraryResult, type LegMetrics } from "@/domain/itinerary";
 import { type LngLat } from "@/domain/geo";
-import { applyOperations, DEFAULT_PREFERENCES, sortStops, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
+import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, renumber, sortStops, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
 import { db } from "@/lib/db";
 import { AppError, ProviderError } from "@/lib/errors";
 import { getServices, type Services } from "@/services/providers";
@@ -131,7 +131,12 @@ export async function computeLegs(stops: Stop[], preferences: TripPreferences, s
       const leg = await getRouteLeg([from.longitude, from.latitude], [to.longitude, to.latitude], preferences, services);
       legs.push({ fromStopId: from.id, toStopId: to.id, distanceMeters: leg.distanceMeters, durationSeconds: leg.durationSeconds, provider: leg.provider, status: "ok", geometry: leg.geometry });
     } catch (error) {
-      const message = error instanceof ProviderError ? error.message : "The route for this leg could not be calculated.";
+      const message =
+        error instanceof ProviderError && error.kind === "not_found"
+          ? `No road found near ${from.name} or ${to.name}. Move that stop to a nearby road or town, then retry.`
+          : error instanceof ProviderError
+            ? error.message
+            : "The route for this leg could not be calculated.";
       errors.push(`${from.name} to ${to.name}: ${message}`);
       legs.push({ fromStopId: from.id, toStopId: to.id, distanceMeters: 0, durationSeconds: 0, provider: "none", status: "missing", geometry: [] });
     }
@@ -157,7 +162,7 @@ export async function listTripsForOwner(ownerId: string) {
   }));
 }
 
-export async function createTrip(ownerId: string, input: { name: string; notes?: string; startDate?: string | null; durationDays?: number | null; origin: Endpoint; destination: Endpoint }) {
+export async function createTrip(ownerId: string, input: { name: string; notes?: string; startDate?: string | null; durationDays?: number | null; roundTrip?: boolean; origin: Endpoint; destination: Endpoint }) {
   const id = randomUUID();
   await db.$transaction(async (tx) => {
     await tx.trip.create({
@@ -187,9 +192,10 @@ export async function createTrip(ownerId: string, input: { name: string; notes?:
       notes: "",
       visitMinutes: null,
     }));
-    for (const stop of stops) await tx.stop.create({ data: { ...stop, tripId: id } });
+    const allStops = input.roundTrip ? renumber([...stops, makeReturnStop(stops[0])]) : stops;
+    for (const stop of allStops) await tx.stop.create({ data: { ...stop, tripId: id } });
     await tx.tripRevision.create({
-      data: { tripId: id, revisionNumber: 1, summary: "Trip created", snapshot: { stops, preferences: DEFAULT_PREFERENCES } as unknown as Prisma.InputJsonValue },
+      data: { tripId: id, revisionNumber: 1, summary: "Trip created", snapshot: { stops: allStops, preferences: DEFAULT_PREFERENCES } as unknown as Prisma.InputJsonValue },
     });
   });
   return id;
@@ -343,6 +349,43 @@ export async function undoLastChange(input: { tripId: string; ownerId: string; e
 export async function deleteTrip(tripId: string, ownerId: string) {
   await loadOwnedTrip(tripId, ownerId);
   await db.trip.delete({ where: { id: tripId } });
+}
+
+/** Deletes the chosen trips. Any ID that is not one of the owner's trips is refused, so nothing else is touched. */
+export async function deleteTripsByIds(ownerId: string, tripIds: string[]) {
+  const unique = [...new Set(tripIds)];
+  const owned = await db.trip.count({ where: { ownerId, id: { in: unique } } });
+  if (owned !== unique.length) throw new AppError(404, "trip_not_found", "One or more selected trips could not be found. Refresh the list and try again.");
+  const result = await db.trip.deleteMany({ where: { ownerId, id: { in: unique } } });
+  return result.count;
+}
+
+/** Trips that started before today. Trips with no start date are not historical, so they are kept. */
+function historicalWhere(ownerId: string, today: Date): Prisma.TripWhereInput {
+  return { ownerId, startDate: { lt: today } };
+}
+
+export async function countHistoricalTrips(ownerId: string, today = startOfUtcDay(new Date())) {
+  return db.trip.count({ where: historicalWhere(ownerId, today) });
+}
+
+/**
+ * Deletes the owner's historical trips. The caller passes the count the user confirmed, and the
+ * delete is refused if the number has changed, so the user never removes trips they did not see.
+ */
+export async function deleteHistoricalTrips(ownerId: string, expectedCount: number, today = startOfUtcDay(new Date())) {
+  const result = await db.$transaction(async (tx) => {
+    const current = await tx.trip.count({ where: historicalWhere(ownerId, today) });
+    if (current !== expectedCount) {
+      throw new AppError(409, "count_changed", `The number of past trips changed (now ${current}). Review the list and try again.`);
+    }
+    return tx.trip.deleteMany({ where: historicalWhere(ownerId, today) });
+  });
+  return result.count;
+}
+
+function startOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
 export async function discoverPlaces(input: { tripId: string; ownerId: string; services?: Services }) {

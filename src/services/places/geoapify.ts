@@ -2,7 +2,17 @@ import { distanceToLineMeters, haversineMeters, sampleLine, type LngLat } from "
 import { TtlCache } from "@/lib/cache";
 import { ProviderError } from "@/lib/errors";
 import { fetchProviderJson } from "@/lib/http";
-import type { PlaceCandidate, PlaceSearchOptions, PlacesService } from "../types";
+import type { PlaceCandidate, PlaceSearchOptions, PlacesService, SettlementCandidate } from "../types";
+
+/** Geoapify place types for towns and cities. Population is not provided, so the type is the size signal. */
+export const SETTLEMENT_CATEGORIES = ["populated_place.city", "populated_place.town", "populated_place.village"];
+
+export function settlementKind(categories: string[]): SettlementCandidate["kind"] | null {
+  if (categories.some((value) => value === "populated_place.city" || value.startsWith("populated_place.city."))) return "city";
+  if (categories.some((value) => value === "populated_place.town" || value.startsWith("populated_place.town."))) return "town";
+  if (categories.some((value) => value === "populated_place.village" || value.startsWith("populated_place.village."))) return "village";
+  return null;
+}
 
 const BASE_URL = "https://api.geoapify.com/v2/places";
 const PROVIDER = "Geoapify Places";
@@ -149,6 +159,38 @@ export class GeoapifyPlacesService implements PlacesService {
   private readonly cache = new TtlCache<PlaceCandidate[]>(60 * 60 * 1000, 100);
 
   constructor(private readonly apiKey: string) {}
+
+  /** Cities, towns and villages within the search radius of the route. Population is not returned, so place type is the size signal. */
+  async searchSettlements(routeGeometry: LngLat[], radiusMeters: number): Promise<SettlementCandidate[]> {
+    if (routeGeometry.length < 2) return [];
+    const body = {
+      categories: SETTLEMENT_CATEGORIES,
+      filter: { type: "polyline", geometry: { type: "LineString", coordinates: sampleLine(routeGeometry, ROUTE_POINTS) }, buffer: radiusMeters },
+      limit: 100,
+    };
+    const data = await fetchProviderJson<{ features?: GeoapifyFeature[] }>(BASE_URL, {
+      provider: PROVIDER,
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", "x-api-key": this.apiKey },
+      body: JSON.stringify(body),
+      timeoutMs: 20000,
+    });
+    if (!Array.isArray(data.features)) throw new ProviderError(PROVIDER, "invalid_response", "The places provider returned an unexpected response.");
+    const seen = new Set<string>();
+    const settlements: SettlementCandidate[] = [];
+    for (const feature of data.features) {
+      const props = feature.properties ?? {};
+      const kind = settlementKind(props.categories ?? []);
+      const latitude = props.lat ?? feature.geometry?.coordinates?.[1];
+      const longitude = props.lon ?? feature.geometry?.coordinates?.[0];
+      if (!props.name || !kind || typeof latitude !== "number" || typeof longitude !== "number") continue;
+      const externalId = props.place_id ?? `${latitude},${longitude}`;
+      if (seen.has(externalId)) continue;
+      seen.add(externalId);
+      settlements.push({ externalId, name: props.name, kind, latitude, longitude });
+    }
+    return settlements;
+  }
 
   async searchAlongRoute(routeGeometry: LngLat[], options: PlaceSearchOptions): Promise<PlaceCandidate[]> {
     if (routeGeometry.length < 2) return [];
