@@ -109,7 +109,20 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
         type: "circle",
         source: "places",
         filter: ["!", ["has", "point_count"]],
-        paint: { "circle-color": ["match", ["get", "status"], "saved", "#059669", "#7c3aed"], "circle-radius": 7, "circle-stroke-width": 2, "circle-stroke-color": "#ffffff" },
+        paint: {
+          "circle-color": ["match", ["get", "status"], "saved", "#059669", "#facc15"],
+          "circle-radius": ["case", ["==", ["get", "sel"], 1], 16, 10],
+          "circle-stroke-width": ["case", ["==", ["get", "sel"], 1], 4, 2],
+          "circle-stroke-color": ["case", ["==", ["get", "sel"], 1], "#ea580c", "#1f2937"],
+        },
+      });
+      map.addLayer({
+        id: "place-numbers",
+        type: "symbol",
+        source: "places",
+        filter: ["!", ["has", "point_count"]],
+        layout: { "text-field": ["to-string", ["get", "n"]], "text-size": 11, "text-allow-overlap": true, "text-ignore-placement": true },
+        paint: { "text-color": "#1f2937" },
       });
       map.on("click", "place-points", (event) => {
         const id = event.features?.[0]?.properties?.id;
@@ -212,13 +225,13 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
     const visiblePlaces = trip.places.filter((place) => place.status !== "dismissed");
     (map.getSource("places") as GeoJSONSource | undefined)?.setData({
       type: "FeatureCollection",
-      features: visiblePlaces.map((place) => ({
+      features: visiblePlaces.map((place, index) => ({
         type: "Feature",
-        properties: { id: place.id, status: place.status, name: place.name },
+        properties: { id: place.id, status: place.status, name: place.name, n: index + 1, sel: place.id === selectedPlaceId ? 1 : 0 },
         geometry: { type: "Point", coordinates: [place.longitude, place.latitude] },
       })),
     });
-  }, [trip.legs, trip.stops, trip.places, selectedStopId, overnightSuggestions, previewGeometry, mapReady]);
+  }, [trip.legs, trip.stops, trip.places, selectedStopId, selectedPlaceId, overnightSuggestions, previewGeometry, mapReady]);
 
   // Fit to the route when the set of stops changes, not on every edit, so the map does not jump while the user types notes.
   useEffect(() => {
@@ -237,7 +250,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
     const map = mapRef.current;
     if (!map || !mapReady || !selectedPlaceId) return;
     const place = trip.places.find((item) => item.id === selectedPlaceId);
-    if (place) map.easeTo({ center: [place.longitude, place.latitude], duration: 400 });
+    if (place) map.easeTo({ center: [place.longitude, place.latitude], zoom: Math.max(map.getZoom(), 13), duration: 600 });
   }, [selectedPlaceId, trip.places, mapReady]);
 
   return (

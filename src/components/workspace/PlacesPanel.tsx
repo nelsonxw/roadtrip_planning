@@ -17,8 +17,10 @@ export function PlacesPanel({ trip, selectedPlaceId, onSelectPlace, discover, se
   const [discovering, setDiscovering] = useState(false);
   const [category, setCategory] = useState("all");
   const categories = Array.from(new Set(trip.places.map((p) => p.category))).sort();
-  const visible = trip.places.filter((p) => p.status !== "dismissed" && (category === "all" || p.category === category));
-  const selected = trip.places.find((p) => p.id === selectedPlaceId) ?? null;
+  // Numbers follow the full non-dismissed list, so a category filter never renumbers places the map shows.
+  const numbered = trip.places.filter((p) => p.status !== "dismissed");
+  const numberOf = new Map(numbered.map((p, index) => [p.id, index + 1]));
+  const visible = numbered.filter((p) => category === "all" || p.category === category);
 
   async function runDiscovery() {
     setDiscovering(true);
@@ -58,7 +60,6 @@ export function PlacesPanel({ trip, selectedPlaceId, onSelectPlace, discover, se
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {selected && <PlaceCard place={selected} onClose={() => onSelectPlace(null)} onStatus={setStatus} onAdd={addToTrip} />}
         {trip.places.length === 0 ? (
           <p className="text-sm text-slate-600">No places yet. Search along the route to see attractions, parks and viewpoints.</p>
         ) : (
@@ -71,13 +72,21 @@ export function PlacesPanel({ trip, selectedPlaceId, onSelectPlace, discover, se
                   aria-pressed={place.id === selectedPlaceId}
                   className={`w-full rounded-lg border p-3 text-left hover:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-400 ${place.id === selectedPlaceId ? "border-violet-400 bg-violet-50" : "border-slate-200 bg-white"}`}
                 >
-                  <span className="block font-medium text-slate-900">{place.name}</span>
+                  <span className="block font-medium text-slate-900">
+                    <span className="mr-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-800 bg-yellow-300 px-1 text-[11px] font-semibold text-slate-900">{numberOf.get(place.id)}</span>
+                    {place.name}
+                  </span>
                   <span className="block text-xs text-slate-600">
                     {place.category}
                     {place.detourDistanceMeters !== null ? ` · ~${formatDistance(place.detourDistanceMeters)} from route (straight line)` : ""}
                     {place.status === "added" ? " · in itinerary" : place.status === "saved" ? " · saved" : ""}
                   </span>
                 </button>
+                {place.id === selectedPlaceId && (
+                  <div className="mt-2">
+                    <PlaceCard place={place} number={numberOf.get(place.id)} onClose={() => onSelectPlace(null)} onStatus={setStatus} onAdd={addToTrip} />
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -87,7 +96,7 @@ export function PlacesPanel({ trip, selectedPlaceId, onSelectPlace, discover, se
   );
 }
 
-function PlaceCard({ place, onClose, onStatus, onAdd }: { place: PlaceView; onClose: () => void; onStatus: Props["setStatus"]; onAdd: Props["addToTrip"] }) {
+function PlaceCard({ place, number, onClose, onStatus, onAdd }: { place: PlaceView; number?: number; onClose: () => void; onStatus: Props["setStatus"]; onAdd: Props["addToTrip"] }) {
   const inItinerary = place.status === "added";
   return (
     <article aria-label={`Details for ${place.name}`} className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -102,7 +111,12 @@ function PlaceCard({ place, onClose, onStatus, onAdd }: { place: PlaceView; onCl
       )}
       <div className="space-y-2 p-4 text-sm">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-semibold text-slate-900">{place.name}</h3>
+          <h3 className="font-semibold text-slate-900">
+            {number !== undefined && (
+              <span className="mr-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-800 bg-yellow-300 px-1 text-[11px] font-semibold text-slate-900">{number}</span>
+            )}
+            {place.name}
+          </h3>
           <button type="button" onClick={onClose} aria-label="Close details" className="text-slate-500 hover:text-slate-900">✕</button>
         </div>
         <p className="text-xs text-slate-600">{place.category}{place.address ? ` · ${place.address}` : ""}</p>
