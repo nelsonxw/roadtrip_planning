@@ -7,7 +7,7 @@ import type { PlaceCandidate, PlaceSearchOptions, PlacesService, SettlementCandi
 /** Geoapify place types for towns and cities. Population is not provided, so the type is the size signal. */
 export const SETTLEMENT_CATEGORIES = ["populated_place.city", "populated_place.town", "populated_place.village"];
 
-export function settlementKind(categories: string[]): SettlementCandidate["kind"] | null {
+export function settlementKind(categories: string[]): "city" | "town" | "village" | null {
   if (categories.some((value) => value === "populated_place.city" || value.startsWith("populated_place.city."))) return "city";
   if (categories.some((value) => value === "populated_place.town" || value.startsWith("populated_place.town."))) return "town";
   if (categories.some((value) => value === "populated_place.village" || value.startsWith("populated_place.village."))) return "village";
@@ -57,6 +57,7 @@ type GeoapifyFeature = {
   geometry?: { coordinates?: [number, number] };
   properties?: {
     name?: string;
+    state?: string;
     lat?: number;
     lon?: number;
     formatted?: string;
@@ -180,14 +181,13 @@ export class GeoapifyPlacesService implements PlacesService {
     const settlements: SettlementCandidate[] = [];
     for (const feature of data.features) {
       const props = feature.properties ?? {};
-      const kind = settlementKind(props.categories ?? []);
       const latitude = props.lat ?? feature.geometry?.coordinates?.[1];
       const longitude = props.lon ?? feature.geometry?.coordinates?.[0];
-      if (!props.name || !kind || typeof latitude !== "number" || typeof longitude !== "number") continue;
+      if (!props.name || !settlementKind(props.categories ?? []) || typeof latitude !== "number" || typeof longitude !== "number") continue;
       const externalId = props.place_id ?? `${latitude},${longitude}`;
       if (seen.has(externalId)) continue;
       seen.add(externalId);
-      settlements.push({ externalId, name: props.name, kind, latitude, longitude });
+      settlements.push({ externalId, name: props.name, region: props.state ?? null, latitude, longitude });
     }
     return settlements;
   }

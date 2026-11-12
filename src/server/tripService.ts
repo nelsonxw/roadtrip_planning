@@ -63,6 +63,7 @@ function toStop(row: StopRow): Stop {
     source: row.source as Stop["source"],
     notes: row.notes,
     visitMinutes: row.visitMinutes,
+    overnight: row.overnight,
   };
 }
 
@@ -191,6 +192,7 @@ export async function createTrip(ownerId: string, input: { name: string; notes?:
       source: "user",
       notes: "",
       visitMinutes: null,
+      overnight: false,
     }));
     const allStops = input.roundTrip ? renumber([...stops, makeReturnStop(stops[0])]) : stops;
     for (const stop of allStops) await tx.stop.create({ data: { ...stop, tripId: id } });
@@ -269,6 +271,7 @@ export async function applyTripChange(input: { tripId: string; ownerId: string; 
         source: stop.source,
         notes: stop.notes,
         visitMinutes: stop.visitMinutes,
+        overnight: stop.overnight,
       };
       await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
     }
@@ -337,7 +340,7 @@ export async function undoLastChange(input: { tripId: string; ownerId: string; e
       await tx.stop.deleteMany({ where: { id: { in: removed } } });
     }
     for (const stop of undone) {
-      const data = { name: stop.name, address: stop.address, latitude: stop.latitude, longitude: stop.longitude, sequence: stop.sequence, stopType: stop.stopType, source: stop.source, notes: stop.notes, visitMinutes: stop.visitMinutes };
+      const data = { name: stop.name, address: stop.address, latitude: stop.latitude, longitude: stop.longitude, sequence: stop.sequence, stopType: stop.stopType, source: stop.source, notes: stop.notes, visitMinutes: stop.visitMinutes, overnight: stop.overnight };
       await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
     }
     if (snapshot.preferences) await tx.trip.update({ where: { id: input.tripId }, data: { preferences: snapshot.preferences as unknown as Prisma.InputJsonValue } });

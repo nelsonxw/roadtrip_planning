@@ -60,6 +60,7 @@ model Stop {
   source       String
   notes        String   @default("")
   visitMinutes Int?
+  overnight    Boolean  @default(false)
   place        PlaceRecommendation?
   createdAt    DateTime @default(now())
 

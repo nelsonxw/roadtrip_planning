@@ -3,7 +3,7 @@ import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, type Stop, type T
 import { buildItinerary } from "@/domain/itinerary";
 
 const stop = (id: string, stopType: Stop["stopType"], latitude: number, longitude: number, sequence: number): Stop => ({
-  id, name: id, address: "", latitude, longitude, sequence, stopType, source: "user", notes: "", visitMinutes: null,
+  id, name: id, address: "", latitude, longitude, sequence, stopType, source: "user", notes: "", visitMinutes: null, overnight: false,
 });
 
 const oneWay = (): Stop[] => [stop("origin", "origin", 30.27, -97.74, 0), stop("destination", "destination", 39.74, -104.99, 1)];
@@ -81,6 +81,24 @@ describe("round trip", () => {
     const amarillo = stops.find((s) => s.name === "Amarillo")!;
     stops = applyOperations({ stops, preferences: DEFAULT_PREFERENCES }, [{ type: "move_stop", stopId: amarillo.id, toIndex: 0, leg: "return" }]).stops;
     expect(stops.map((s) => s.name)).toEqual(["origin", "Abilene", "destination", "Amarillo", "origin"]);
+  });
+
+  it("ends the day at a stop marked overnight, even when the daily limit is not reached", () => {
+    const stops = [
+      stop("origin", "origin", 30.27, -97.74, 0),
+      { ...stop("lubbock", "optional", 33.5, -101.9, 1), overnight: true },
+      stop("amarillo", "optional", 35.2, -101.8, 2),
+      stop("destination", "destination", 39.74, -104.99, 3),
+    ];
+    const legs = [
+      { distanceMeters: 1000, durationSeconds: 3600, provider: "t", status: "ok" as const },
+      { distanceMeters: 1000, durationSeconds: 3600, provider: "t", status: "ok" as const },
+      { distanceMeters: 1000, durationSeconds: 3600, provider: "t", status: "ok" as const },
+    ];
+    const itinerary = buildItinerary({ stops, legs, preferences: DEFAULT_PREFERENCES, durationDays: null, startDate: null });
+    expect(itinerary.days).toHaveLength(2);
+    expect(itinerary.days[0].overnightStopId).toBe("lubbock");
+    expect(itinerary.days[1].startStopId).toBe("lubbock");
   });
 
   it("makeReturnStop copies the origin's name, address and coordinates", () => {

@@ -3,7 +3,6 @@ import { getCurrentUser } from "@/server/auth";
 import { listTripsForOwner } from "@/server/tripService";
 import { NewTripForm } from "@/components/NewTripForm";
 import { SignOutButton } from "@/components/SignOutButton";
-import { ClearHistoricalTrips } from "@/components/ClearHistoricalTrips";
 import { TripList } from "@/components/TripList";
 
 export default async function HomePage() {
@@ -23,7 +22,6 @@ export default async function HomePage() {
       <div className="mx-auto grid max-w-5xl gap-8 p-6 md:grid-cols-[1fr_360px]">
         <section aria-labelledby="trips-heading">
           <h2 id="trips-heading" className="text-lg font-semibold text-slate-900">Your trips</h2>
-          <ClearHistoricalTrips />
           {trips.length === 0 ? (
             <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-600">No trips yet. Create one to start planning.</p>
           ) : (

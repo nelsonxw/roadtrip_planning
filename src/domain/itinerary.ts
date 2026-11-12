@@ -116,6 +116,12 @@ export function buildItinerary(input: BuildItineraryInput): ItineraryResult {
     current.driveDurationSeconds += leg.durationSeconds;
     current.visitMinutes += visitFor(stop).minutes;
     if (leg.status === "missing") current.warnings.push(`Route to "${stop.name}" is not calculated yet.`);
+    // A stop marked as an overnight stop ends that day's driving here, unless it is the final stop.
+    if (stop.overnight && i < stops.length - 1) {
+      current.overnightStopId = stop.id;
+      days.push(current);
+      current = newDay(stop);
+    }
   }
   days.push(current);
 

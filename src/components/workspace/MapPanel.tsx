@@ -22,6 +22,9 @@ const TYPE_LABEL: Record<Stop["stopType"], string> = { origin: "Start", destinat
 
 type Props = {
   trip: TripView;
+  overnightSuggestions: { afterDay: number; settlement: { id: string; name: string; latitude: number; longitude: number; detourKm: number; population: number } }[];
+  /** Dashed preview of the route through the suggested overnight towns. Not saved until a suggestion is accepted. */
+  previewGeometry: [number, number][];
   selectedStopId: string | null;
   selectedPlaceId: string | null;
   onSelectStop: (id: string) => void;
@@ -43,7 +46,7 @@ maplibre.setWorkerUrl("/maplibre-gl-worker.mjs");
 
 const SHORT_LABEL: Record<Stop["stopType"], string | null> = { origin: "S", destination: "E", required: null, optional: null, return: "R" };
 
-export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, onSelectPlace }: Props) {
+export function MapPanel({ trip, overnightSuggestions, previewGeometry, selectedStopId, selectedPlaceId, onSelectStop, onSelectPlace }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef(new Map<string, { marker: Marker; el: HTMLButtonElement }>());
@@ -67,7 +70,31 @@ export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, 
       map.addSource("route", { type: "geojson", data: EMPTY });
       map.addSource("selected-leg", { type: "geojson", data: EMPTY });
       map.addSource("places", { type: "geojson", data: EMPTY, cluster: true, clusterRadius: 40, clusterMaxZoom: 11 });
+      map.addSource("overnight", { type: "geojson", data: EMPTY });
+      map.addSource("preview", { type: "geojson", data: EMPTY });
+      map.addLayer({ id: "preview-line", type: "line", source: "preview", paint: { "line-color": "#4f46e5", "line-width": 4, "line-dasharray": [2, 2], "line-opacity": 0.9 } }, "route-line");
+      map.addLayer({
+        id: "overnight-halo",
+        type: "circle",
+        source: "overnight",
+        paint: { "circle-radius": 16, "circle-color": "#4f46e5", "circle-opacity": 0.2 },
+      });
+      map.addLayer({
+        id: "overnight-points",
+        type: "circle",
+        source: "overnight",
+        paint: { "circle-radius": 8, "circle-color": "#4f46e5", "circle-stroke-width": 2, "circle-stroke-color": "#ffffff" },
+      });
+      map.addLayer({
+        id: "overnight-labels",
+        type: "symbol",
+        source: "overnight",
+        layout: { "text-field": ["concat", "Night ", ["get", "afterDay"], ": ", ["get", "name"]], "text-size": 12, "text-offset": [0, 1.4], "text-anchor": "top" },
+        paint: { "text-color": "#312e81", "text-halo-color": "#ffffff", "text-halo-width": 2 },
+      });
+      map.addSource("route-return", { type: "geojson", data: EMPTY });
       map.addLayer({ id: "route-line", type: "line", source: "route", paint: { "line-color": "#0284c7", "line-width": 4, "line-opacity": 0.85 } });
+      map.addLayer({ id: "route-return-line", type: "line", source: "route-return", paint: { "line-color": "#0d9488", "line-width": 4, "line-opacity": 0.85 } });
       map.addLayer({ id: "selected-leg-line", type: "line", source: "selected-leg", paint: { "line-color": "#f97316", "line-width": 7 } });
       map.addLayer({
         id: "place-clusters",
@@ -151,15 +178,37 @@ export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const routeSource = map.getSource("route") as GeoJSONSource | undefined;
-    routeSource?.setData({
+    // Legs that start at or after the destination are the way back, so they get their own colour.
+    const destination = trip.stops.find((stop) => stop.stopType === "destination");
+    const isReturnLeg = (fromStopId: string) => {
+      const from = trip.stops.find((stop) => stop.id === fromStopId);
+      return Boolean(destination && from && from.sequence >= destination.sequence);
+    };
+    const lineFeatures = (legs: TripView["legs"]) =>
+      legs.filter((leg) => leg.geometry.length > 1).map((leg) => ({ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: leg.geometry } }));
+    (map.getSource("route") as GeoJSONSource | undefined)?.setData({
       type: "FeatureCollection",
-      features: trip.legs.filter((leg) => leg.geometry.length > 1).map((leg) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: leg.geometry } })),
+      features: lineFeatures(trip.legs.filter((leg) => !isReturnLeg(leg.fromStopId))),
+    });
+    (map.getSource("route-return") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: lineFeatures(trip.legs.filter((leg) => isReturnLeg(leg.fromStopId))),
     });
     const selectedGeometry = trip.legs.filter((leg) => leg.fromStopId === selectedStopId || leg.toStopId === selectedStopId).flatMap((leg) => leg.geometry);
     (map.getSource("selected-leg") as GeoJSONSource | undefined)?.setData(
       selectedGeometry.length > 1 ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: selectedGeometry } }] } : EMPTY,
     );
+    (map.getSource("preview") as GeoJSONSource | undefined)?.setData(
+      previewGeometry.length > 1 ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: previewGeometry } }] } : EMPTY,
+    );
+    (map.getSource("overnight") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: overnightSuggestions.map((item) => ({
+        type: "Feature",
+        properties: { afterDay: item.afterDay, name: item.settlement.name },
+        geometry: { type: "Point", coordinates: [item.settlement.longitude, item.settlement.latitude] },
+      })),
+    });
     const visiblePlaces = trip.places.filter((place) => place.status !== "dismissed");
     (map.getSource("places") as GeoJSONSource | undefined)?.setData({
       type: "FeatureCollection",
@@ -169,7 +218,7 @@ export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, 
         geometry: { type: "Point", coordinates: [place.longitude, place.latitude] },
       })),
     });
-  }, [trip.legs, trip.places, selectedStopId, mapReady]);
+  }, [trip.legs, trip.stops, trip.places, selectedStopId, overnightSuggestions, previewGeometry, mapReady]);
 
   // Fit to the route when the set of stops changes, not on every edit, so the map does not jump while the user types notes.
   useEffect(() => {
@@ -197,7 +246,8 @@ export function MapPanel({ trip, selectedStopId, selectedPlaceId, onSelectStop, 
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-white/95 p-2 text-[11px] text-slate-700 shadow">
         <p className="font-semibold">Legend</p>
         <p>■ Start · ◆ Destination · ● Required · ○ Optional</p>
-        <p>● Suggested place · ● Saved place · Route: blue</p>
+        <p>● Suggested place · ● Saved place · ● Overnight suggestion</p>
+        <p>Route: <span className="text-sky-600">blue = outbound</span> · <span className="text-teal-600">teal = return</span></p>
       </div>
       {trip.modes.routing === "demo" && (
         <div className="absolute left-3 top-3 rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900 shadow">DEMO ROUTING: distances and times are estimates, not live road data</div>

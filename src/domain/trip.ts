@@ -9,7 +9,7 @@ export type StopSource = "user" | "upload" | "ai" | "poi";
 export type Leg = "outbound" | "return";
 
 export const MAX_INTERMEDIATE_STOPS = 40;
-export const DEFAULT_MAX_DAILY_DRIVE_MINUTES = 360;
+export const DEFAULT_MAX_DAILY_DRIVE_MINUTES = 480;
 
 export type Stop = {
   id: string;
@@ -22,6 +22,8 @@ export type Stop = {
   source: StopSource;
   notes: string;
   visitMinutes: number | null;
+  /** The trip stops here for the night, so that day's driving ends at this stop. */
+  overnight: boolean;
 };
 
 export type TripPreferences = {
@@ -54,6 +56,7 @@ export const tripOperationSchema = z.discriminatedUnion("type", [
     source: z.enum(["user", "upload", "ai", "poi"]).default("user"),
     notes,
     visitMinutes,
+    overnight: z.boolean().default(false),
     placeId: z.string().optional(),
     /** Index among the stops on the chosen leg. Omitted means append to that leg. */
     index: z.number().int().min(0).optional(),
@@ -115,7 +118,7 @@ function requireStop(stops: Stop[], stopId: string): Stop {
 
 /** The return stop repeats the origin's location, so the route ends where it started. */
 export function makeReturnStop(origin: Stop): Stop {
-  return { id: randomUUID(), name: origin.name, address: origin.address, latitude: origin.latitude, longitude: origin.longitude, sequence: 0, stopType: "return", source: "user", notes: "", visitMinutes: 0 };
+  return { id: randomUUID(), name: origin.name, address: origin.address, latitude: origin.latitude, longitude: origin.longitude, sequence: 0, stopType: "return", source: "user", notes: "", visitMinutes: 0, overnight: false };
 }
 
 type Legs = { origin?: Stop; destination?: Stop; outbound: Stop[]; inbound: Stop[]; returns: Stop[] };
@@ -189,6 +192,7 @@ export function applyOperations(input: { stops: Stop[]; preferences: TripPrefere
           source: operation.source ?? "user",
           notes: operation.notes ?? "",
           visitMinutes: operation.visitMinutes ?? null,
+          overnight: operation.overnight ?? false,
         };
         if (operation.leg === "return") {
           // A return-leg stop only makes sense on a round trip, so adding one turns round trip on.

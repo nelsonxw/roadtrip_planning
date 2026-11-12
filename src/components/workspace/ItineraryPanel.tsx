@@ -34,6 +34,7 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
   const roundTrip = trip.stops.some((stop) => stop.stopType === "return");
   const [addType, setAddType] = useState<"required" | "optional">("required");
   const [addLeg, setAddLeg] = useState<"outbound" | "return">("outbound");
+  const [addOvernight, setAddOvernight] = useState(false);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const stopsById = new Map(trip.stops.map((stop) => [stop.id, stop]));
@@ -43,7 +44,7 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
     if (!chosen) return;
     setAdding(true);
     const ok = await apply(
-      [{ type: "add_stop", name: chosen.name, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude, stopType: addType, leg: addLeg, source: "user", notes: "", visitMinutes: null }],
+      [{ type: "add_stop", name: chosen.name, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude, stopType: addType, leg: addLeg, overnight: addOvernight, source: "user", notes: "", visitMinutes: null }],
       `Added ${chosen.name}`,
     );
     setAdding(false);
@@ -99,6 +100,10 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
             <input type="radio" name="stop-leg" checked={addLeg === "return"} onChange={() => setAddLeg("return")} /> Return trip
           </label>
         </fieldset>
+        <label className="flex items-center gap-1.5 text-sm">
+          <input type="checkbox" checked={addOvernight} onChange={(e) => setAddOvernight(e.target.checked)} />
+          Overnight stop (the day&apos;s driving ends here)
+        </label>
         <button type="button" disabled={!chosen || adding} onClick={addStop} className="w-full rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
           {adding ? "Adding..." : "Add to trip"}
         </button>

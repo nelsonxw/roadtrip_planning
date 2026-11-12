@@ -63,7 +63,8 @@ export type PlaceSearchOptions = {
 export type SettlementCandidate = {
   externalId: string;
   name: string;
-  kind: "city" | "town" | "village";
+  /** State or region name, used to tell apart towns with the same name. */
+  region: string | null;
   latitude: number;
   longitude: number;
 };

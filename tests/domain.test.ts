@@ -14,6 +14,7 @@ const stop = (id: string, stopType: Stop["stopType"], latitude: number, longitud
   source: "user",
   notes: "",
   visitMinutes: null,
+  overnight: false,
   ...extra,
 });
 

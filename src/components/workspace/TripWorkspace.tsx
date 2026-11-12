@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PlaceView } from "@/server/tripService";
+import { api } from "@/lib/clientApi";
 import { useTrip } from "./useTrip";
 import { MapPanel } from "./MapPanel";
 import { ItineraryPanel } from "./ItineraryPanel";
-import { OvernightSuggestions } from "./OvernightSuggestions";
+import { OvernightSuggestions, useOvernightPlan } from "./OvernightSuggestions";
 import { PlacesPanel } from "./PlacesPanel";
 import { ChatPanel } from "./ChatPanel";
 
@@ -16,6 +17,27 @@ const STATUS_TEXT = { loading: "Loading…", saved: "All changes saved", saving:
 
 export function TripWorkspace({ tripId }: { tripId: string }) {
   const trip = useTrip(tripId);
+  const overnight = useOvernightPlan(tripId, trip.trip?.version ?? 0);
+  const [dismissedTowns, setDismissedTowns] = useState<Set<string>>(new Set());
+  const dismissTown = (id: string) => setDismissedTowns((prev) => new Set(prev).add(id));
+  const visibleOvernight = overnight.plan?.needed ? overnight.plan.suggestions.filter((item) => !dismissedTowns.has(item.settlement.id)) : [];
+  const [previewGeometry, setPreviewGeometry] = useState<[number, number][]>([]);
+  const previewKey = visibleOvernight.map((item) => `${item.settlement.latitude},${item.settlement.longitude}`).join("|");
+  useEffect(() => {
+    if (!previewKey) return;
+    let active = true;
+    api<{ geometry: [number, number][] }>(`/api/trips/${tripId}/overnight/preview`, {
+      method: "POST",
+      body: JSON.stringify({ points: visibleOvernight.map((item) => ({ latitude: item.settlement.latitude, longitude: item.settlement.longitude })) }),
+    })
+      .then((data) => active && setPreviewGeometry(data.geometry))
+      .catch(() => active && setPreviewGeometry([]));
+    return () => {
+      active = false;
+    };
+    // The preview depends on the chosen towns and the trip version, not on the array identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewKey, trip.trip?.version, tripId]);
   const [mobileTab, setMobileTab] = useState<MobileTab>("map");
   const [sidePanel, setSidePanel] = useState<SidePanel>("itinerary");
   const [chatOpen, setChatOpen] = useState(true);
@@ -90,7 +112,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
             {sidePanel === "itinerary" ? (
               <>
                 <div className="p-4 pb-0">
-                  <OvernightSuggestions tripId={tripId} version={current.version} onAccepted={() => trip.reload()} />
+                  <OvernightSuggestions tripId={tripId} version={current.version} plan={overnight.plan} dismissed={dismissedTowns} onDismiss={dismissTown} onAccepted={() => trip.reload()} />
                 </div>
               <ItineraryPanel
                 trip={current}
@@ -119,6 +141,8 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
           <div className="min-h-[400px] flex-1">
             <MapPanel
               trip={current}
+              overnightSuggestions={visibleOvernight}
+              previewGeometry={previewKey ? previewGeometry : []}
               selectedStopId={selectedStopId}
               selectedPlaceId={selectedPlaceId}
               onSelectStop={(id) => {
