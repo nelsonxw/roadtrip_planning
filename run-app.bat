@@ -1,8 +1,7 @@
 @echo off
 rem RoadTrip AI launcher for Windows.
-rem   run-app.bat            start the app (builds first if needed)
-rem   run-app.bat --rebuild  rebuild before starting
-rem   run-app.bat --dev      start the development server instead (hot reload)
+rem   run-app.bat            build from the current source, then start the app
+rem   run-app.bat --dev      start the development server instead (hot reload, no build)
 
 setlocal
 cd /d "%~dp0"
@@ -88,18 +87,14 @@ if not errorlevel 1 (
   exit /b 1
 )
 
-rem 9. Production build (skipped in dev mode and when an existing build is up to date)
+rem 9. Production build from the current source, so the server never runs an older build (skipped in dev mode)
 if /i "%~1"=="--dev" goto start_server
-if /i "%~1"=="--rebuild" set NEED_BUILD=1
-if not exist ".next\BUILD_ID" set NEED_BUILD=1
-if defined NEED_BUILD (
-  echo Building the app. This takes about a minute...
-  call npm run build
-  if errorlevel 1 (
-    echo Build failed. See the messages above.
-    pause
-    exit /b 1
-  )
+echo Building the app. This takes about a minute...
+call npm run build
+if errorlevel 1 (
+  echo Build failed. See the messages above.
+  pause
+  exit /b 1
 )
 
 :start_server

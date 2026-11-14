@@ -2,7 +2,7 @@ import { distanceToLineMeters, haversineMeters, sampleLine, type LngLat } from "
 import { TtlCache } from "@/lib/cache";
 import { ProviderError } from "@/lib/errors";
 import { fetchProviderJson } from "@/lib/http";
-import type { PlaceCandidate, PlaceSearchOptions, PlacesService, SettlementCandidate } from "../types";
+import type { HotelCandidate, PlaceCandidate, PlaceSearchOptions, PlacesService, SettlementCandidate } from "../types";
 
 /** Geoapify place types for towns and cities. Population is not provided, so the type is the size signal. */
 export const SETTLEMENT_CATEGORIES = ["populated_place.city", "populated_place.town", "populated_place.village"];
@@ -190,6 +190,32 @@ export class GeoapifyPlacesService implements PlacesService {
       settlements.push({ externalId, name: props.name, region: props.state ?? null, latitude, longitude });
     }
     return settlements;
+  }
+
+  /** Named hotels inside the radius, nearest to the centre first. Listings only: no availability or prices. */
+  async searchHotels(center: LngLat, radiusMeters: number): Promise<HotelCandidate[]> {
+    const [longitude, latitude] = center;
+    const body = {
+      categories: ["accommodation.hotel"],
+      filter: { type: "circle", lon: longitude, lat: latitude, radius: radiusMeters },
+      bias: { type: "proximity", lon: longitude, lat: latitude },
+      limit: 20,
+    };
+    const data = await fetchProviderJson<{ features?: GeoapifyFeature[] }>(BASE_URL, {
+      provider: PROVIDER,
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", "x-api-key": this.apiKey },
+      body: JSON.stringify(body),
+      timeoutMs: 20000,
+    });
+    if (!Array.isArray(data.features)) throw new ProviderError(PROVIDER, "invalid_response", "The places provider returned an unexpected response.");
+    return data.features.flatMap((feature): HotelCandidate[] => {
+      const props = feature.properties ?? {};
+      const latitudeOf = props.lat ?? feature.geometry?.coordinates?.[1];
+      const longitudeOf = props.lon ?? feature.geometry?.coordinates?.[0];
+      if (!props.name || typeof latitudeOf !== "number" || typeof longitudeOf !== "number") return [];
+      return [{ externalId: props.place_id ?? `${latitudeOf},${longitudeOf}`, name: props.name, address: props.formatted ?? "", latitude: latitudeOf, longitude: longitudeOf }];
+    });
   }
 
   async searchAlongRoute(routeGeometry: LngLat[], options: PlaceSearchOptions): Promise<PlaceCandidate[]> {

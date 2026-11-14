@@ -3,7 +3,7 @@ import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, type Stop, type T
 import { buildItinerary } from "@/domain/itinerary";
 
 const stop = (id: string, stopType: Stop["stopType"], latitude: number, longitude: number, sequence: number): Stop => ({
-  id, name: id, address: "", latitude, longitude, sequence, stopType, source: "user", notes: "", visitMinutes: null, overnight: false,
+  id, name: id, address: "", latitude, longitude, sequence, stopType, source: "user", notes: "", visitMinutes: null, overnight: false, hotels: [],
 });
 
 const oneWay = (): Stop[] => [stop("origin", "origin", 30.27, -97.74, 0), stop("destination", "destination", 39.74, -104.99, 1)];

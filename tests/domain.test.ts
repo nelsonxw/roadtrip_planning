@@ -15,6 +15,7 @@ const stop = (id: string, stopType: Stop["stopType"], latitude: number, longitud
   notes: "",
   visitMinutes: null,
   overnight: false,
+  hotels: [],
   ...extra,
 });
 
@@ -133,6 +134,72 @@ describe("buildItinerary", () => {
     const stops = [stop("o", "origin", 0, 0, 0), stop("d", "destination", 0, 3, 1)];
     const result = buildItinerary({ stops, legs: [{ distanceMeters: 0, durationSeconds: 0, provider: "none", status: "missing" }], preferences: { maxDailyDriveMinutes: 360 }, durationDays: null, startDate: null });
     expect(result.days[0].warnings[0]).toMatch(/not calculated yet/);
+  });
+});
+
+describe("hotels at overnight stops", () => {
+  const legs = (...durations: number[]): LegMetrics[] =>
+    durations.map((seconds) => ({ distanceMeters: seconds * 20, durationSeconds: seconds, provider: "test", status: "ok" }));
+  const overnightStops = (hotels: Stop["hotels"] = []) => [
+    stop("o", "origin", 0, 0, 0),
+    stop("a", "optional", 0, 1, 1, { overnight: true, hotels }),
+    stop("d", "destination", 0, 3, 2),
+  ];
+  const itinerary = (stops: Stop[]) =>
+    buildItinerary({ stops, legs: legs(3600, 3600), preferences: { maxDailyDriveMinutes: 360 }, durationDays: null, startDate: null });
+  const hotel = (id: string, nights: number): Stop["hotels"][number] => ({ id, name: `Hotel ${id}`, address: "", nights });
+  const stopNamed = (stops: Stop[], id: string) => stops.find((item) => item.id === id)!;
+
+  it("plans one night at an overnight stop with no hotel listed", () => {
+    expect(itinerary(overnightStops()).days.map((d) => d.kind)).toEqual(["driving", "driving"]);
+  });
+
+  it("adds a no-driving day at the same stop for each extra night", () => {
+    const result = itinerary(overnightStops([hotel("h1", 3)]));
+    expect(result.days.map((d) => d.kind)).toEqual(["driving", "rest", "rest", "driving"]);
+    expect(result.days[1]).toMatchObject({ startStopId: "a", overnightStopId: "a", driveDurationSeconds: 0 });
+    expect(result.days[3].startStopId).toBe("a");
+    expect(result.totals.drivingDays).toBe(2);
+  });
+
+  it("adds up the nights of several hotels at one stop", () => {
+    const result = itinerary(overnightStops([hotel("h1", 2), hotel("h2", 1)]));
+    expect(result.days.filter((d) => d.kind === "rest")).toHaveLength(2);
+  });
+
+  it("adds, updates and removes hotels on an overnight stop", () => {
+    const added = applyOperations({ stops: overnightStops(), preferences: DEFAULT_PREFERENCES }, [{ type: "add_hotel", stopId: "a", name: "Inn", nights: 2 }]);
+    const hotelId = stopNamed(added.stops, "a").hotels[0].id;
+    expect(stopNamed(added.stops, "a").hotels).toEqual([{ id: hotelId, name: "Inn", address: "", nights: 2, latitude: null, longitude: null }]);
+
+    const updated = applyOperations({ stops: added.stops, preferences: DEFAULT_PREFERENCES }, [{ type: "update_hotel", stopId: "a", hotelId, nights: 4 }]);
+    expect(stopNamed(updated.stops, "a").hotels[0].nights).toBe(4);
+
+    const removed = applyOperations({ stops: updated.stops, preferences: DEFAULT_PREFERENCES }, [{ type: "remove_hotel", stopId: "a", hotelId }]);
+    expect(stopNamed(removed.stops, "a").hotels).toEqual([]);
+  });
+
+  it("stores a hotel's located coordinates and clears them when the hotel is updated without them", () => {
+    const added = applyOperations(
+      { stops: overnightStops(), preferences: DEFAULT_PREFERENCES },
+      [{ type: "add_hotel", stopId: "a", name: "Inn", address: "1 Main St", nights: 1, latitude: 35.2, longitude: -101.8 }],
+    );
+    const hotelId = stopNamed(added.stops, "a").hotels[0].id;
+    expect(stopNamed(added.stops, "a").hotels[0]).toMatchObject({ latitude: 35.2, longitude: -101.8 });
+
+    const moved = applyOperations({ stops: added.stops, preferences: DEFAULT_PREFERENCES }, [{ type: "update_hotel", stopId: "a", hotelId, latitude: null, longitude: null }]);
+    expect(stopNamed(moved.stops, "a").hotels[0]).toMatchObject({ latitude: null, longitude: null });
+  });
+
+  it("refuses hotels on a stop that is not an overnight stop", () => {
+    expect(() =>
+      applyOperations({ stops: baseStops(), preferences: DEFAULT_PREFERENCES }, [{ type: "add_hotel", stopId: "lunch", name: "Inn", nights: 1 }]),
+    ).toThrow(/Hotels can only be added to an overnight stop/);
+  });
+
+  it("turns a stop into an overnight stop with update_stop", () => {
+    const result = applyOperations({ stops: baseStops(), preferences: DEFAULT_PREFERENCES }, [{ type: "update_stop", stopId: "lunch", overnight: true }]);
+    expect(stopNamed(result.stops, "lunch").overnight).toBe(true);
   });
 });
 

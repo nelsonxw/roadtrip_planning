@@ -21,7 +21,7 @@ function nearestBreakDistance(fraction: number, days: number): number {
 
 export type OvernightSuggestionView = {
   afterDay: number;
-  settlement: { id: string; name: string; latitude: number; longitude: number; detourKm: number; population: number };
+  settlement: { id: string; name: string; latitude: number; longitude: number; detourMiles: number; population: number };
 };
 
 export type OvernightPlan = {
@@ -93,7 +93,7 @@ export async function planOvernightStops(tripId: string, ownerId: string, servic
       name: item.settlement.name,
       latitude: item.settlement.latitude,
       longitude: item.settlement.longitude,
-      detourKm: Math.round(item.settlement.detourMeters / 100) / 10,
+      detourMiles: Math.round((item.settlement.detourMeters / 1609.344) * 10) / 10,
       population: item.settlement.population ?? 0,
     },
   }));

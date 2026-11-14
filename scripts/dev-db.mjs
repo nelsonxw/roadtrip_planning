@@ -5,7 +5,8 @@ import { existsSync } from "node:fs";
 
 const port = Number(process.env.LOCAL_PG_PORT ?? 5433);
 const databaseDir = "./.pgdata";
-const pg = new EmbeddedPostgres({ databaseDir, user: "postgres", password: "postgres", port, persistent: true });
+// UTF-8 so place names with non-Latin-1 characters can be saved. Windows defaults to WIN1252 otherwise.
+const pg = new EmbeddedPostgres({ databaseDir, user: "postgres", password: "postgres", port, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"] });
 
 if (!existsSync(`${databaseDir}/PG_VERSION`)) await pg.initialise();
 await pg.start();

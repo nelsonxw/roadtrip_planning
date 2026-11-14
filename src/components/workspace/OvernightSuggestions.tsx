@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/clientApi";
 
-export type OvernightSuggestion = { afterDay: number; settlement: { id: string; name: string; latitude: number; longitude: number; detourKm: number; population: number } };
+export type OvernightSuggestion = { afterDay: number; settlement: { id: string; name: string; latitude: number; longitude: number; detourMiles: number; population: number } };
 export type OvernightPlan = { needed: boolean; days: number; minPopulation: number; suggestions: OvernightSuggestion[]; note: string };
 
 /** Fetches the overnight plan for a trip. Refetches when the trip version changes, so suggestions stay current. */
@@ -75,7 +75,7 @@ export function OvernightSuggestions({
               <span className="text-xs">
                 <span className="font-medium text-slate-900">After day {item.afterDay}: {item.settlement.name}</span>
                 <span className="block text-slate-600">
-                  population {item.settlement.population.toLocaleString("en-US")} · about {item.settlement.detourKm} km from the route
+                  population {item.settlement.population.toLocaleString("en-US")} · about {item.settlement.detourMiles} mi from the route
                 </span>
               </span>
               <span className="flex shrink-0 gap-1">

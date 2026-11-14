@@ -18,9 +18,18 @@ export class OpenRouteServiceGeocoding implements GeocodingService {
 
   constructor(private readonly apiKey: string) {}
 
-  async search(query: string, limit: number): Promise<GeocodeCandidate[]> {
+  search(query: string, limit: number): Promise<GeocodeCandidate[]> {
+    return this.features("autocomplete", query, limit);
+  }
+
+  /** Full addresses with a house number only match the search endpoint. Autocomplete returns nothing for them. */
+  resolve(query: string, limit: number): Promise<GeocodeCandidate[]> {
+    return this.features("search", query, limit);
+  }
+
+  private async features(endpoint: "autocomplete" | "search", query: string, limit: number): Promise<GeocodeCandidate[]> {
     const params = new URLSearchParams({ text: query, size: String(limit) });
-    const data = await fetchProviderJson<ORSGeocodeResponse>(`${BASE_URL}/geocode/autocomplete?${params}`, {
+    const data = await fetchProviderJson<ORSGeocodeResponse>(`${BASE_URL}/geocode/${endpoint}?${params}`, {
       provider: this.provider,
       headers: { Authorization: this.apiKey, Accept: "application/json" },
       timeoutMs: 8000,

@@ -11,6 +11,10 @@ export type Leg = "outbound" | "return";
 export const MAX_INTERMEDIATE_STOPS = 40;
 export const DEFAULT_MAX_DAILY_DRIVE_MINUTES = 480;
 
+/** A place to stay at an overnight stop. Hotels at the same stop are stayed at one after another. */
+/** Coordinates are set once the address is located on the map. Hotels saved before that have none. */
+export type Hotel = { id: string; name: string; address: string; nights: number; latitude?: number | null; longitude?: number | null };
+
 export type Stop = {
   id: string;
   name: string;
@@ -24,6 +28,7 @@ export type Stop = {
   visitMinutes: number | null;
   /** The trip stops here for the night, so that day's driving ends at this stop. */
   overnight: boolean;
+  hotels: Hotel[];
 };
 
 export type TripPreferences = {
@@ -42,6 +47,12 @@ const coordinate = z.object({ latitude: z.number().refine(isValidLatitude, "Lati
 const stopName = z.string().trim().min(1, "Stop name is required.").max(120);
 const notes = z.string().max(1000).default("");
 const visitMinutes = z.number().int().min(0).max(24 * 60).nullable().default(null);
+const hotelName = stopName;
+const hotelNights = z.number().int().min(1).max(30);
+const hotelCoordinates = {
+  latitude: z.number().refine(isValidLatitude, "Latitude must be between -90 and 90.").nullable().optional(),
+  longitude: z.number().refine(isValidLongitude, "Longitude must be between -180 and 180.").nullable().optional(),
+};
 
 /** Every change to a trip goes through these typed operations. The AI assistant can only propose these. */
 export const tripOperationSchema = z.discriminatedUnion("type", [
@@ -71,7 +82,19 @@ export const tripOperationSchema = z.discriminatedUnion("type", [
     notes: z.string().max(1000).optional(),
     visitMinutes: z.number().int().min(0).max(24 * 60).nullable().optional(),
     stopType: z.enum(["required", "optional"]).optional(),
+    overnight: z.boolean().optional(),
   }),
+  z.object({ type: z.literal("add_hotel"), stopId: z.string(), name: hotelName, address: z.string().max(300).default(""), nights: hotelNights, ...hotelCoordinates }),
+  z.object({
+    type: z.literal("update_hotel"),
+    stopId: z.string(),
+    hotelId: z.string(),
+    name: hotelName.optional(),
+    address: z.string().max(300).optional(),
+    nights: hotelNights.optional(),
+    ...hotelCoordinates,
+  }),
+  z.object({ type: z.literal("remove_hotel"), stopId: z.string(), hotelId: z.string() }),
   z.object({ type: z.literal("optimize_order") }),
   z.object({
     type: z.literal("set_preferences"),
@@ -116,9 +139,24 @@ function requireStop(stops: Stop[], stopId: string): Stop {
   return stop;
 }
 
+function requireOvernightStop(stops: Stop[], stopId: string): Stop {
+  const stop = requireStop(stops, stopId);
+  if (!stop.overnight) throw new AppError(422, "not_overnight", "Hotels can only be added to an overnight stop.");
+  return stop;
+}
+
+function requireHotel(stop: Stop, hotelId: string): void {
+  if (!stop.hotels.some((hotel) => hotel.id === hotelId)) throw new AppError(404, "hotel_not_found", "That hotel no longer exists. Refresh the trip and try again.");
+}
+
+/** Nights spent at a stop: the sum of its hotel stays, or one night when no hotel is listed yet. */
+export function nightsAt(stop: Stop): number {
+  return stop.hotels.length ? stop.hotels.reduce((sum, hotel) => sum + hotel.nights, 0) : 1;
+}
+
 /** The return stop repeats the origin's location, so the route ends where it started. */
 export function makeReturnStop(origin: Stop): Stop {
-  return { id: randomUUID(), name: origin.name, address: origin.address, latitude: origin.latitude, longitude: origin.longitude, sequence: 0, stopType: "return", source: "user", notes: "", visitMinutes: 0, overnight: false };
+  return { id: randomUUID(), name: origin.name, address: origin.address, latitude: origin.latitude, longitude: origin.longitude, sequence: 0, stopType: "return", source: "user", notes: "", visitMinutes: 0, overnight: false, hotels: [] };
 }
 
 type Legs = { origin?: Stop; destination?: Stop; outbound: Stop[]; inbound: Stop[]; returns: Stop[] };
@@ -166,6 +204,10 @@ function nearestNeighbour(start: Stop, stops: Stop[]): Stop[] {
   return ordered;
 }
 
+function updateHotels(stops: Stop[], stopId: string, change: (hotels: Hotel[]) => Hotel[]): Stop[] {
+  return stops.map((stop) => (stop.id === stopId ? { ...stop, hotels: change(stop.hotels) } : stop));
+}
+
 /** Pure function: applies operations to a copy of the stops and returns the new state. Throws AppError on invalid input. */
 export function applyOperations(input: { stops: Stop[]; preferences: TripPreferences }, operations: TripOperation[]): ApplyResult {
   let stops = renumber(sortStops(input.stops));
@@ -193,6 +235,7 @@ export function applyOperations(input: { stops: Stop[]; preferences: TripPrefere
           notes: operation.notes ?? "",
           visitMinutes: operation.visitMinutes ?? null,
           overnight: operation.overnight ?? false,
+          hotels: [],
         };
         if (operation.leg === "return") {
           // A return-leg stop only makes sense on a round trip, so adding one turns round trip on.
@@ -251,9 +294,48 @@ export function applyOperations(input: { stops: Stop[]; preferences: TripPrefere
                 notes: operation.notes ?? item.notes,
                 visitMinutes: operation.visitMinutes === undefined ? item.visitMinutes : operation.visitMinutes,
                 stopType: fixed ? item.stopType : (operation.stopType ?? item.stopType),
+                overnight: operation.overnight ?? item.overnight,
               }
             : item,
         );
+        break;
+      }
+      case "add_hotel": {
+        const stop = requireOvernightStop(stops, operation.stopId);
+        const hotel: Hotel = {
+          id: randomUUID(),
+          name: operation.name,
+          address: operation.address ?? "",
+          nights: operation.nights,
+          latitude: operation.latitude ?? null,
+          longitude: operation.longitude ?? null,
+        };
+        stops = updateHotels(stops, stop.id, (hotels) => [...hotels, hotel]);
+        break;
+      }
+      case "update_hotel": {
+        const stop = requireStop(stops, operation.stopId);
+        requireHotel(stop, operation.hotelId);
+        stops = updateHotels(stops, stop.id, (hotels) =>
+          hotels.map((hotel) =>
+            hotel.id === operation.hotelId
+              ? {
+                  ...hotel,
+                  name: operation.name ?? hotel.name,
+                  address: operation.address ?? hotel.address,
+                  nights: operation.nights ?? hotel.nights,
+                  latitude: operation.latitude === undefined ? hotel.latitude : operation.latitude,
+                  longitude: operation.longitude === undefined ? hotel.longitude : operation.longitude,
+                }
+              : hotel,
+          ),
+        );
+        break;
+      }
+      case "remove_hotel": {
+        const stop = requireStop(stops, operation.stopId);
+        requireHotel(stop, operation.hotelId);
+        stops = updateHotels(stops, stop.id, (hotels) => hotels.filter((hotel) => hotel.id !== operation.hotelId));
         break;
       }
       case "optimize_order": {

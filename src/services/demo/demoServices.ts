@@ -53,6 +53,10 @@ export class DemoGeocoding implements GeocodingService {
       .slice(0, limit)
       .map((place) => ({ label: `${place.name} (DEMO)`, name: place.name, latitude: place.latitude, longitude: place.longitude, confidence: null }));
   }
+
+  resolve(query: string, limit: number): Promise<GeocodeCandidate[]> {
+    return this.search(query, limit);
+  }
 }
 
 export class DemoRouting implements RoutingService {

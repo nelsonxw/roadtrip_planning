@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { PlaceView } from "@/server/tripService";
+import type { HotelCandidate } from "@/services/types";
 import { api } from "@/lib/clientApi";
 import { useTrip } from "./useTrip";
 import { MapPanel } from "./MapPanel";
@@ -9,6 +10,7 @@ import { ItineraryPanel } from "./ItineraryPanel";
 import { OvernightSuggestions, useOvernightPlan } from "./OvernightSuggestions";
 import { PlacesPanel } from "./PlacesPanel";
 import { ChatPanel } from "./ChatPanel";
+import { filterHotels, type HotelSearch, type PendingHotel } from "./hotelSearch";
 
 type MobileTab = "map" | "trip" | "chat";
 type SidePanel = "itinerary" | "places";
@@ -43,6 +45,8 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   const [chatOpen, setChatOpen] = useState(true);
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [hotelSearch, setHotelSearch] = useState<HotelSearch | null>(null);
+  const [pendingHotel, setPendingHotel] = useState<PendingHotel | null>(null);
 
   if (trip.status === "loading" && !trip.trip) return <div className="p-6 text-sm text-slate-600">Loading trip…</div>;
   if (!trip.trip) {
@@ -60,7 +64,18 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   const selectStop = (id: string) => {
     setSelectedStopId(id);
     setSelectedPlaceId(null);
+    setHotelSearch(null);
   };
+  const searchHotels = async (stopId: string) => {
+    try {
+      const hotels = await api<HotelCandidate[]>(`/api/trips/${tripId}/stops/${stopId}/hotels`);
+      setHotelSearch({ stopId, hotels, pickedId: null, query: "" });
+    } catch (err) {
+      trip.setError(err instanceof Error ? err.message : "Hotel search failed.");
+    }
+  };
+  const pickHotel = (id: string) => setHotelSearch((prev) => (prev ? { ...prev, pickedId: id } : prev));
+  const filterHotelResults = (query: string) => setHotelSearch((prev) => (prev ? { ...prev, query } : prev));
   const selectPlace = (id: string | null) => {
     setSelectedPlaceId(id);
     if (id) setSidePanel("places");
@@ -122,6 +137,11 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
                 commitImport={trip.commitImport}
                 confirmRemove={(name) => window.confirm(`"${name}" is a required stop. Remove it from the trip?`)}
                 retryRoutes={() => trip.reload().catch(() => undefined)}
+                hotelSearch={hotelSearch}
+                onSearchHotels={searchHotels}
+                onPickHotel={pickHotel}
+                onFilterHotels={filterHotelResults}
+                onPendingHotel={setPendingHotel}
               />
               </>
             ) : (
@@ -150,6 +170,10 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
                 setSidePanel("itinerary");
               }}
               onSelectPlace={selectPlace}
+              hotelMatches={filterHotels(hotelSearch?.hotels ?? [], hotelSearch?.query ?? "")}
+              pickedHotelId={hotelSearch?.pickedId ?? null}
+              onPickHotel={pickHotel}
+              pendingHotel={pendingHotel}
             />
           </div>
         </main>

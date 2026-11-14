@@ -24,7 +24,7 @@ const view = {
 
 function services(search: (q: string) => Promise<unknown[]>): Services {
   return {
-    geocoding: { provider: "test", mode: "live", search: search as never },
+    geocoding: { provider: "test", mode: "live", search: search as never, resolve: search as never },
     routing: new DemoRouting(),
     places: new DemoPlaces(),
     images: new DemoImages(),

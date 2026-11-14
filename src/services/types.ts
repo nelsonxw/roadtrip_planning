@@ -14,7 +14,10 @@ export type GeocodeCandidate = {
 export interface GeocodingService {
   readonly provider: string;
   readonly mode: ServiceMode;
+  /** Autocomplete for a search box, which may be partial text. */
   search(query: string, limit: number): Promise<GeocodeCandidate[]>;
+  /** Resolves a complete address to coordinates. */
+  resolve(query: string, limit: number): Promise<GeocodeCandidate[]>;
 }
 
 export type RoutingOptions = {
@@ -69,12 +72,17 @@ export type SettlementCandidate = {
   longitude: number;
 };
 
+/** A hotel from a directory listing. Room availability and prices are not known. */
+export type HotelCandidate = { externalId: string; name: string; address: string; latitude: number; longitude: number };
+
 export interface PlacesService {
   readonly provider: string;
   readonly mode: ServiceMode;
   searchAlongRoute(routeGeometry: LngLat[], options: PlaceSearchOptions): Promise<PlaceCandidate[]>;
   /** Cities, towns and villages near the route. Optional: not every provider can list settlements. */
   searchSettlements?(routeGeometry: LngLat[], radiusMeters: number): Promise<SettlementCandidate[]>;
+  /** Hotels within a radius of a point, nearest first. Optional: only providers with accommodation data implement it. */
+  searchHotels?(center: LngLat, radiusMeters: number): Promise<HotelCandidate[]>;
 }
 
 export type ImageInfo = {

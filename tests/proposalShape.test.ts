@@ -3,7 +3,7 @@ import { checkProposalShape, describeOperation } from "@/server/assistant";
 import type { Stop, TripOperation } from "@/domain/trip";
 
 const stops: Stop[] = [
-  { id: "lubbock", name: "Lubbock", address: "", latitude: 33.5, longitude: -101.9, sequence: 1, stopType: "optional", source: "ai", notes: "", visitMinutes: null, overnight: false },
+  { id: "lubbock", name: "Lubbock", address: "", latitude: 33.5, longitude: -101.9, sequence: 1, stopType: "optional", source: "ai", notes: "", visitMinutes: null, overnight: false, hotels: [] },
 ];
 
 const addAmarillo: TripOperation = { type: "add_stop", name: "Amarillo", address: "", latitude: 35.2, longitude: -101.8, stopType: "optional", leg: "outbound", source: "ai", notes: "", visitMinutes: null };

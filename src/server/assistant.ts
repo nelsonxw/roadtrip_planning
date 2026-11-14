@@ -35,6 +35,12 @@ export function describeOperation(operation: TripOperation, stops: Stop[]): stri
       return `Move ${nameOf(operation.stopId)} to position ${operation.toIndex + 1}${operation.leg ? ` on the ${operation.leg === "return" ? "return trip" : "outbound trip"}` : ""}`;
     case "update_stop":
       return `Update ${nameOf(operation.stopId)}`;
+    case "add_hotel":
+      return `Add ${operation.name} (${operation.nights} ${operation.nights === 1 ? "night" : "nights"}) at ${nameOf(operation.stopId)}`;
+    case "update_hotel":
+      return `Update a hotel at ${nameOf(operation.stopId)}`;
+    case "remove_hotel":
+      return `Remove a hotel at ${nameOf(operation.stopId)}`;
     case "optimize_order":
       return "Reorder stops to shorten the route";
     case "set_round_trip":

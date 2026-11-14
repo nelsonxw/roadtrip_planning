@@ -1,5 +1,5 @@
 import type { Stop, TripPreferences } from "./trip";
-import { sortStops } from "./trip";
+import { nightsAt, sortStops } from "./trip";
 
 /** Used when a stop has no visit duration. The UI labels these values as estimates. */
 export const DEFAULT_VISIT_MINUTES = 60;
@@ -120,6 +120,10 @@ export function buildItinerary(input: BuildItineraryInput): ItineraryResult {
     if (stop.overnight && i < stops.length - 1) {
       current.overnightStopId = stop.id;
       days.push(current);
+      // Each night after the arrival night is a day spent at the same stop with no driving.
+      for (let night = 1; night < nightsAt(stop); night++) {
+        days.push({ ...newDay(stop), kind: "rest", items: [], visitMinutes: 0, overnightStopId: stop.id });
+      }
       current = newDay(stop);
     }
   }

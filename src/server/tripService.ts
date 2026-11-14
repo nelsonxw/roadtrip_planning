@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, Stop as StopRow, Trip as TripRow, PlaceRecommendation as PlaceRow } from "@prisma/client";
 import { buildItinerary, type ItineraryResult, type LegMetrics } from "@/domain/itinerary";
 import { type LngLat } from "@/domain/geo";
-import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, renumber, sortStops, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
+import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, renumber, sortStops, type Hotel, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
 import { db } from "@/lib/db";
 import { AppError, ProviderError } from "@/lib/errors";
 import { getServices, type Services } from "@/services/providers";
@@ -64,6 +64,7 @@ function toStop(row: StopRow): Stop {
     notes: row.notes,
     visitMinutes: row.visitMinutes,
     overnight: row.overnight,
+    hotels: row.hotels as unknown as Hotel[],
   };
 }
 
@@ -192,7 +193,8 @@ export async function createTrip(ownerId: string, input: { name: string; notes?:
       source: "user",
       notes: "",
       visitMinutes: null,
-      overnight: false,
+      overnight: stopType === "destination",
+      hotels: [],
     }));
     const allStops = input.roundTrip ? renumber([...stops, makeReturnStop(stops[0])]) : stops;
     for (const stop of allStops) await tx.stop.create({ data: { ...stop, tripId: id } });
@@ -272,6 +274,7 @@ export async function applyTripChange(input: { tripId: string; ownerId: string; 
         notes: stop.notes,
         visitMinutes: stop.visitMinutes,
         overnight: stop.overnight,
+        hotels: stop.hotels as unknown as Prisma.InputJsonValue,
       };
       await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
     }
@@ -340,7 +343,7 @@ export async function undoLastChange(input: { tripId: string; ownerId: string; e
       await tx.stop.deleteMany({ where: { id: { in: removed } } });
     }
     for (const stop of undone) {
-      const data = { name: stop.name, address: stop.address, latitude: stop.latitude, longitude: stop.longitude, sequence: stop.sequence, stopType: stop.stopType, source: stop.source, notes: stop.notes, visitMinutes: stop.visitMinutes, overnight: stop.overnight };
+      const data = { name: stop.name, address: stop.address, latitude: stop.latitude, longitude: stop.longitude, sequence: stop.sequence, stopType: stop.stopType, source: stop.source, notes: stop.notes, visitMinutes: stop.visitMinutes, overnight: stop.overnight, hotels: stop.hotels as unknown as Prisma.InputJsonValue };
       await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
     }
     if (snapshot.preferences) await tx.trip.update({ where: { id: input.tripId }, data: { preferences: snapshot.preferences as unknown as Prisma.InputJsonValue } });
@@ -395,7 +398,7 @@ export async function discoverPlaces(input: { tripId: string; ownerId: string; s
   const services = input.services ?? getServices();
   const view = await getTripView(input.tripId, input.ownerId, services);
   if (view.routeGeometry.length < 2) throw new AppError(409, "no_route", "Calculate a route before searching for places.");
-  const candidates = await services.places.searchAlongRoute(view.routeGeometry, { radiusMeters: 15000, maxResults: 25 });
+  const candidates = await services.places.searchAlongRoute(view.routeGeometry, { radiusMeters: Math.round(50 * 1609.344), maxResults: 25 });
   for (const place of candidates) {
     const data = {
       name: place.name,
@@ -421,6 +424,19 @@ export async function discoverPlaces(input: { tripId: string; ownerId: string; s
     });
   }
   return getTripView(input.tripId, input.ownerId, services);
+}
+
+const HOTEL_SEARCH_RADIUS_METERS = Math.round(10 * 1609.344);
+
+/** Hotels near an overnight stop, for choosing where to stay. Listings only: availability and prices are not checked. */
+export async function findHotelsNearStop(input: { tripId: string; ownerId: string; stopId: string; services?: Services }) {
+  const services = input.services ?? getServices();
+  await loadOwnedTrip(input.tripId, input.ownerId);
+  const stop = await db.stop.findFirst({ where: { id: input.stopId, tripId: input.tripId } });
+  if (!stop) throw new AppError(404, "stop_not_found", "That stop no longer exists. Refresh the trip and try again.");
+  if (!stop.overnight) throw new AppError(422, "not_overnight", "Hotels can only be added to an overnight stop.");
+  if (!services.places.searchHotels) throw new AppError(409, "hotel_search_unavailable", "Hotel search needs a Geoapify places key. Add GEOAPIFY_API_KEY to .env.local.");
+  return services.places.searchHotels([stop.longitude, stop.latitude], HOTEL_SEARCH_RADIUS_METERS);
 }
 
 export async function setPlaceStatus(input: { tripId: string; ownerId: string; placeId: string; status: "suggested" | "saved" | "dismissed" }) {
