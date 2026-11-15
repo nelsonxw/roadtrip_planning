@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, Stop as StopRow, Trip as TripRow, PlaceRecommendation as PlaceRow } from "@prisma/client";
-import { buildItinerary, type ItineraryResult, type LegMetrics } from "@/domain/itinerary";
+import { buildItinerary, type DayTripLeg, type ItineraryResult, type LegMetrics } from "@/domain/itinerary";
 import { type LngLat } from "@/domain/geo";
-import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, renumber, sortStops, type Hotel, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
+import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, renumber, sortStops, type DayTrip, type Hotel, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
 import { db } from "@/lib/db";
 import { AppError, ProviderError } from "@/lib/errors";
 import { getServices, type Services } from "@/services/providers";
@@ -65,6 +65,7 @@ function toStop(row: StopRow): Stop {
     visitMinutes: row.visitMinutes,
     overnight: row.overnight,
     hotels: row.hotels as unknown as Hotel[],
+    dayTrips: row.dayTrips as unknown as DayTrip[],
   };
 }
 
@@ -119,6 +120,27 @@ export async function getRouteLeg(from: LngLat, to: LngLat, preferences: TripPre
     update: {},
   });
   return leg;
+}
+
+/** Round trip from each day trip's stop to its place and back. A failing trip is reported, never replaced with an estimate. */
+export async function computeDayTrips(stops: Stop[], preferences: TripPreferences, services = getServices()) {
+  const errors: string[] = [];
+  const legs: DayTripLeg[] = [];
+  for (const stop of stops) {
+    for (const trip of stop.dayTrips) {
+      const here: LngLat = [stop.longitude, stop.latitude];
+      const there: LngLat = [trip.longitude, trip.latitude];
+      try {
+        const out = await getRouteLeg(here, there, preferences, services);
+        const back = await getRouteLeg(there, here, preferences, services);
+        legs.push({ id: trip.id, stopId: stop.id, dayIndex: trip.dayIndex, name: trip.name, distanceMeters: out.distanceMeters + back.distanceMeters, durationSeconds: out.durationSeconds + back.durationSeconds, status: "ok" });
+      } catch {
+        errors.push(`Day trip to ${trip.name} from ${stop.name}: the route could not be calculated.`);
+        legs.push({ id: trip.id, stopId: stop.id, dayIndex: trip.dayIndex, name: trip.name, distanceMeters: 0, durationSeconds: 0, status: "missing" });
+      }
+    }
+  }
+  return { legs, errors };
 }
 
 /** Computes every consecutive leg. A failing leg is reported, never silently replaced with an estimate. */
@@ -195,6 +217,7 @@ export async function createTrip(ownerId: string, input: { name: string; notes?:
       visitMinutes: null,
       overnight: stopType === "destination",
       hotels: [],
+      dayTrips: [],
     }));
     const allStops = input.roundTrip ? renumber([...stops, makeReturnStop(stops[0])]) : stops;
     for (const stop of allStops) await tx.stop.create({ data: { ...stop, tripId: id } });
@@ -214,9 +237,10 @@ export async function getTripView(tripId: string, ownerId: string, services = ge
   const preferences = toPreferences(trip.preferences);
   const stops = sortStops(stopRows.map(toStop));
   const { legs, errors } = await computeLegs(stops, preferences, services);
+  const dayTrips = await computeDayTrips(stops, preferences, services);
   const routeGeometry = legs.flatMap((leg) => leg.geometry);
   const legMetrics = legs.map(({ distanceMeters, durationSeconds, provider, status }) => ({ distanceMeters, durationSeconds, provider, status }));
-  const itinerary = buildItinerary({ stops, legs: legMetrics, preferences, durationDays: trip.durationDays, startDate: toDateOnly(trip.startDate) });
+  const itinerary = buildItinerary({ stops, legs: legMetrics, preferences, durationDays: trip.durationDays, startDate: toDateOnly(trip.startDate), dayTrips: dayTrips.legs });
 
   return {
     id: trip.id,
@@ -228,7 +252,7 @@ export async function getTripView(tripId: string, ownerId: string, services = ge
     version: trip.version,
     stops,
     legs,
-    routeErrors: errors,
+    routeErrors: [...errors, ...dayTrips.errors],
     routeGeometry,
     places: placeRows.map(toPlaceView),
     itinerary,
@@ -275,6 +299,7 @@ export async function applyTripChange(input: { tripId: string; ownerId: string; 
         visitMinutes: stop.visitMinutes,
         overnight: stop.overnight,
         hotels: stop.hotels as unknown as Prisma.InputJsonValue,
+        dayTrips: stop.dayTrips as unknown as Prisma.InputJsonValue,
       };
       await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
     }
@@ -343,7 +368,7 @@ export async function undoLastChange(input: { tripId: string; ownerId: string; e
       await tx.stop.deleteMany({ where: { id: { in: removed } } });
     }
     for (const stop of undone) {
-      const data = { name: stop.name, address: stop.address, latitude: stop.latitude, longitude: stop.longitude, sequence: stop.sequence, stopType: stop.stopType, source: stop.source, notes: stop.notes, visitMinutes: stop.visitMinutes, overnight: stop.overnight, hotels: stop.hotels as unknown as Prisma.InputJsonValue };
+      const data = { name: stop.name, address: stop.address, latitude: stop.latitude, longitude: stop.longitude, sequence: stop.sequence, stopType: stop.stopType, source: stop.source, notes: stop.notes, visitMinutes: stop.visitMinutes, overnight: stop.overnight, hotels: stop.hotels as unknown as Prisma.InputJsonValue, dayTrips: stop.dayTrips as unknown as Prisma.InputJsonValue };
       await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
     }
     if (snapshot.preferences) await tx.trip.update({ where: { id: input.tripId }, data: { preferences: snapshot.preferences as unknown as Prisma.InputJsonValue } });

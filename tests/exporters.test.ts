@@ -38,8 +38,9 @@ describe("itinerary CSV export", () => {
 
   it("writes one row per driving leg with a start and an end location", () => {
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ day: "1", date: "2026-12-23", leg: "1", start_location: "Austin", end_location: "Lubbock", end_type: "Optional", overnight: "yes" });
-    expect(rows[1]).toMatchObject({ day: "2", leg: "2", start_location: "Lubbock", end_location: "Durango", end_type: "Destination", overnight: "no" });
+    expect(rows[0]).toMatchObject({ day: "1", date: "2026-12-23", leg: "1", start_location: "Austin", end_location: "Lubbock", overnight: "yes" });
+    expect(rows[1]).toMatchObject({ day: "2", leg: "2", start_location: "Lubbock", end_location: "Durango", overnight: "no" });
+    expect(Object.keys(rows[0])).toEqual(["day", "date", "leg", "start_location", "end_location", "drive_miles", "drive_time", "overnight", "notes", "generated_at"]);
   });
 
   it("does not repeat a stop as a separate row when it is the start of the next day", () => {
@@ -50,6 +51,7 @@ describe("itinerary CSV export", () => {
 
   it("leaves drive figures blank for a leg that could not be calculated", () => {
     expect(rows[0].drive_miles).toBe("378.9");
-    expect(rows[1]).toMatchObject({ drive_miles: "", drive_min: "", route_status: "missing" });
+    expect(rows[1]).toMatchObject({ drive_miles: "", drive_time: "" });
+    expect(rows[0].drive_time).toMatch(/h/);
   });
 });

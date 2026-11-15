@@ -13,6 +13,12 @@ export const DEFAULT_MAX_DAILY_DRIVE_MINUTES = 480;
 
 /** A place to stay at an overnight stop. Hotels at the same stop are stayed at one after another. */
 /** Coordinates are set once the address is located on the map. Hotels saved before that have none. */
+/**
+ * A round trip from the place where a day starts, to a destination and back, on that day.
+ * dayIndex counts the days that start at that place: 1 is the first, 2 the next, and so on.
+ */
+export type DayTrip = { id: string; name: string; address: string; latitude: number; longitude: number; dayIndex: number };
+
 export type Hotel = { id: string; name: string; address: string; nights: number; latitude?: number | null; longitude?: number | null };
 
 export type Stop = {
@@ -29,6 +35,7 @@ export type Stop = {
   /** The trip stops here for the night, so that day's driving ends at this stop. */
   overnight: boolean;
   hotels: Hotel[];
+  dayTrips: DayTrip[];
 };
 
 export type TripPreferences = {
@@ -95,6 +102,8 @@ export const tripOperationSchema = z.discriminatedUnion("type", [
     ...hotelCoordinates,
   }),
   z.object({ type: z.literal("remove_hotel"), stopId: z.string(), hotelId: z.string() }),
+  z.object({ type: z.literal("add_day_trip"), stopId: z.string(), dayIndex: z.number().int().min(1), name: stopName, address: z.string().max(300).default(""), ...coordinate.shape }),
+  z.object({ type: z.literal("remove_day_trip"), stopId: z.string(), dayTripId: z.string() }),
   z.object({ type: z.literal("optimize_order") }),
   z.object({
     type: z.literal("set_preferences"),
@@ -156,7 +165,7 @@ export function nightsAt(stop: Stop): number {
 
 /** The return stop repeats the origin's location, so the route ends where it started. */
 export function makeReturnStop(origin: Stop): Stop {
-  return { id: randomUUID(), name: origin.name, address: origin.address, latitude: origin.latitude, longitude: origin.longitude, sequence: 0, stopType: "return", source: "user", notes: "", visitMinutes: 0, overnight: false, hotels: [] };
+  return { id: randomUUID(), name: origin.name, address: origin.address, latitude: origin.latitude, longitude: origin.longitude, sequence: 0, stopType: "return", source: "user", notes: "", visitMinutes: 0, overnight: false, hotels: [], dayTrips: [] };
 }
 
 type Legs = { origin?: Stop; destination?: Stop; outbound: Stop[]; inbound: Stop[]; returns: Stop[] };
@@ -208,6 +217,10 @@ function updateHotels(stops: Stop[], stopId: string, change: (hotels: Hotel[]) =
   return stops.map((stop) => (stop.id === stopId ? { ...stop, hotels: change(stop.hotels) } : stop));
 }
 
+function updateDayTrips(stops: Stop[], stopId: string, change: (dayTrips: DayTrip[]) => DayTrip[]): Stop[] {
+  return stops.map((stop) => (stop.id === stopId ? { ...stop, dayTrips: change(stop.dayTrips) } : stop));
+}
+
 /** Pure function: applies operations to a copy of the stops and returns the new state. Throws AppError on invalid input. */
 export function applyOperations(input: { stops: Stop[]; preferences: TripPreferences }, operations: TripOperation[]): ApplyResult {
   let stops = renumber(sortStops(input.stops));
@@ -236,6 +249,7 @@ export function applyOperations(input: { stops: Stop[]; preferences: TripPrefere
           visitMinutes: operation.visitMinutes ?? null,
           overnight: operation.overnight ?? false,
           hotels: [],
+          dayTrips: [],
         };
         if (operation.leg === "return") {
           // A return-leg stop only makes sense on a round trip, so adding one turns round trip on.
@@ -336,6 +350,23 @@ export function applyOperations(input: { stops: Stop[]; preferences: TripPrefere
         const stop = requireStop(stops, operation.stopId);
         requireHotel(stop, operation.hotelId);
         stops = updateHotels(stops, stop.id, (hotels) => hotels.filter((hotel) => hotel.id !== operation.hotelId));
+        break;
+      }
+      case "add_day_trip": {
+        const stop = requireStop(stops, operation.stopId);
+        if (stop.dayTrips.some((dayTrip) => dayTrip.dayIndex === operation.dayIndex)) {
+          throw new AppError(409, "day_trip_exists", "This day already has a day trip. Remove it first.");
+        }
+        const dayTrip: DayTrip = { id: randomUUID(), name: operation.name, address: operation.address ?? "", latitude: operation.latitude, longitude: operation.longitude, dayIndex: operation.dayIndex };
+        stops = updateDayTrips(stops, stop.id, (dayTrips) => [...dayTrips, dayTrip]);
+        break;
+      }
+      case "remove_day_trip": {
+        const stop = requireStop(stops, operation.stopId);
+        if (!stop.dayTrips.some((dayTrip) => dayTrip.id === operation.dayTripId)) {
+          throw new AppError(404, "day_trip_not_found", "That day trip no longer exists. Refresh the trip and try again.");
+        }
+        stops = updateDayTrips(stops, stop.id, (dayTrips) => dayTrips.filter((dayTrip) => dayTrip.id !== operation.dayTripId));
         break;
       }
       case "optimize_order": {

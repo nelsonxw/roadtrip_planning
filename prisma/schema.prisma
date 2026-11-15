@@ -62,6 +62,7 @@ model Stop {
   visitMinutes Int?
   overnight    Boolean  @default(false)
   hotels       Json     @default("[]")
+  dayTrips     Json     @default("[]")
   place        PlaceRecommendation?
   createdAt    DateTime @default(now())
 

@@ -59,7 +59,11 @@ export function useTrip(tripId: string) {
   /** Runs one mutation at a time. Concurrent edits are refused rather than racing. */
   const mutate = useCallback(
     async (run: (expectedVersion: number) => Promise<Payload>) => {
-      if (busy.current || versionRef.current === null) return false;
+      if (versionRef.current === null) return false;
+      if (busy.current) {
+        setError("Still saving your last change. Wait a moment, then make the change again.");
+        return false;
+      }
       busy.current = true;
       setStatus("saving");
       setError(null);

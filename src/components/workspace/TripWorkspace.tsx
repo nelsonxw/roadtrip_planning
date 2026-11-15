@@ -47,6 +47,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [hotelSearch, setHotelSearch] = useState<HotelSearch | null>(null);
   const [pendingHotel, setPendingHotel] = useState<PendingHotel | null>(null);
+  const [pick, setPick] = useState<{ seq: number; hotel: HotelCandidate } | null>(null);
 
   if (trip.status === "loading" && !trip.trip) return <div className="p-6 text-sm text-slate-600">Loading trip…</div>;
   if (!trip.trip) {
@@ -60,11 +61,16 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   const current = trip.trip;
   const busy = trip.status === "saving";
 
-  const applyAndSelect = (operations: Parameters<typeof trip.applyOperations>[0], summary: string) => trip.applyOperations(operations, summary);
+  const applyAndSelect = (operations: Parameters<typeof trip.applyOperations>[0], summary: string) => {
+    if (operations.some((operation) => operation.type === "add_hotel")) setHotelSearch(null);
+    return trip.applyOperations(operations, summary);
+  };
   const selectStop = (id: string) => {
     setSelectedStopId(id);
     setSelectedPlaceId(null);
     setHotelSearch(null);
+    setPendingHotel(null);
+    setPick(null);
   };
   const searchHotels = async (stopId: string) => {
     try {
@@ -74,7 +80,14 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
       trip.setError(err instanceof Error ? err.message : "Hotel search failed.");
     }
   };
-  const pickHotel = (id: string) => setHotelSearch((prev) => (prev ? { ...prev, pickedId: id } : prev));
+  // Picking a hotel fills the add form, shows it on the map as a preview, and closes the search list.
+  const pickHotel = (id: string) => {
+    const hotel = hotelSearch?.hotels.find((item) => item.externalId === id);
+    if (!hotel) return;
+    setPick((prev) => ({ seq: (prev?.seq ?? 0) + 1, hotel }));
+    setPendingHotel({ name: hotel.name, latitude: hotel.latitude, longitude: hotel.longitude });
+    setHotelSearch(null);
+  };
   const filterHotelResults = (query: string) => setHotelSearch((prev) => (prev ? { ...prev, query } : prev));
   const selectPlace = (id: string | null) => {
     setSelectedPlaceId(id);
@@ -142,6 +155,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
                 onPickHotel={pickHotel}
                 onFilterHotels={filterHotelResults}
                 onPendingHotel={setPendingHotel}
+                pick={pick}
               />
               </>
             ) : (

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { TripView } from "@/server/tripService";
 import type { Hotel, TripOperation } from "@/domain/trip";
+import type { ItineraryDay } from "@/domain/itinerary";
 import { formatDistance, formatDuration } from "@/lib/format";
 import { PlaceSearch, type ChosenPlace } from "../PlaceSearch";
 import { ImportStops } from "./ImportStops";
@@ -23,6 +24,8 @@ type Props = {
   onPickHotel: (id: string) => void;
   onFilterHotels: (query: string) => void;
   onPendingHotel: (hotel: PendingHotel | null) => void;
+  /** The hotel last picked from search. The sequence number makes each pick reset the add form. */
+  pick: { seq: number; hotel: HotelCandidate } | null;
 };
 
 const TYPE_BADGE: Record<string, string> = {
@@ -35,7 +38,7 @@ const TYPE_BADGE: Record<string, string> = {
 };
 const TYPE_TEXT: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional", return: "Return to start" };
 
-export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, commitImport, confirmRemove, retryRoutes, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel }: Props) {
+export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, commitImport, confirmRemove, retryRoutes, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel, pick }: Props) {
   const [chosen, setChosen] = useState<ChosenPlace | null>(null);
   const [retrying, setRetrying] = useState(false);
   const roundTrip = trip.stops.some((stop) => stop.stopType === "return");
@@ -44,6 +47,14 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
   const [addOvernight, setAddOvernight] = useState(false);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [expandedDays, setExpandedDays] = useState<Set<number>>(() => new Set());
+  const [revealedStop, setRevealedStop] = useState<string | null>(null);
+  // Selecting a stop on the map opens the first day that holds it, so its editor is visible.
+  const dayOfSelected = trip.itinerary.days.find((day) => day.items.some((item) => item.stopId === selectedStopId))?.dayNumber;
+  if (selectedStopId !== revealedStop) {
+    setRevealedStop(selectedStopId);
+    if (dayOfSelected !== undefined) setExpandedDays(new Set([dayOfSelected]));
+  }
   const stopsById = new Map(trip.stops.map((stop) => [stop.id, stop]));
   // An overnight stop appears twice: at the end of one day and the start of the next. Its editor belongs to the first.
   const firstAppearance = new Map<string, string>();
@@ -67,6 +78,11 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
 
   async function move(stopId: string, toIndex: number) {
     await apply([{ type: "move_stop", stopId, toIndex }], "Reordered stops");
+  }
+
+  // Only one day is open at a time: opening a day closes the others.
+  function toggleDay(dayNumber: number) {
+    setExpandedDays((prev) => (prev.has(dayNumber) ? new Set() : new Set([dayNumber])));
   }
 
   async function remove(stopId: string) {
@@ -146,18 +162,36 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
           Totals: {formatDistance(trip.itinerary.totals.distanceMeters)} · {formatDuration(trip.itinerary.totals.driveDurationSeconds)} driving (provider estimate, excludes breaks and traffic) · {trip.itinerary.totals.drivingDays} driving day(s)
         </p>
 
-        {trip.itinerary.days.map((day) => (
+        {trip.itinerary.days.map((day) => {
+          const isOpen = expandedDays.has(day.dayNumber);
+          // Start and end stop of the day, e.g. "Austin-Amarillo". A rest day only has its own stop.
+          const startName = day.startStopId ? stopsById.get(day.startStopId)?.name : undefined;
+          const endName = day.items.length ? stopsById.get(day.items[day.items.length - 1].stopId)?.name : undefined;
+          const routeLabel = day.kind === "rest" && day.dayTrip && startName ? [startName, day.dayTrip.name, startName].join("-") : [startName, endName].filter((name, index, names) => name && names.indexOf(name) === index).join("-");
+          return (
           <section key={day.dayNumber} aria-labelledby={`day-${day.dayNumber}`} className="rounded-xl border border-slate-200 bg-white">
-            <header className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+            <header className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
               <h3 id={`day-${day.dayNumber}`} className="text-sm font-semibold text-slate-900">
-                Day {day.dayNumber}
-                {day.date ? <span className="ml-2 font-normal text-slate-500">{day.date}</span> : null}
-                {day.kind === "rest" && <span className="ml-2 rounded bg-slate-100 px-1.5 text-xs font-normal text-slate-600">No driving</span>}
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  aria-controls={`day-${day.dayNumber}-body`}
+                  onClick={() => toggleDay(day.dayNumber)}
+                  className="flex items-center gap-2 rounded text-left focus:outline-none focus:ring-2 focus:ring-sky-400"
+                >
+                  <span aria-hidden="true" className="text-slate-500">{isOpen ? "▾" : "▸"}</span>
+                  Day {day.dayNumber}
+                  {day.date ? <span className="ml-2 font-normal text-slate-500">· {day.date}</span> : null}
+                  {routeLabel && <span className="ml-2 font-normal text-slate-700">· {routeLabel}</span>}
+                  {day.kind === "rest" && <span className="ml-2 rounded bg-slate-100 px-1.5 text-xs font-normal text-slate-600">{day.dayTrip ? "Day trip" : "No driving"}</span>}
+                </button>
               </h3>
-              <span className="text-xs text-slate-600">
-                {formatDistance(day.driveDistanceMeters)} · {formatDuration(day.driveDurationSeconds)}
-              </span>
             </header>
+            {isOpen && (
+            <div id={`day-${day.dayNumber}-body`}>
+              <p className="px-3 pt-2 text-xs text-slate-600">
+                {formatDistance(day.driveDistanceMeters)} · {formatDuration(day.driveDurationSeconds)}
+              </p>
             {day.kind === "rest" && day.startStopId && (
               <p className="px-3 py-2 text-xs text-slate-600">
                 Staying at {stopsById.get(day.startStopId)?.name}
@@ -205,14 +239,21 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
                         onPickHotel={onPickHotel}
                         onFilterHotels={onFilterHotels}
                         onPendingHotel={onPendingHotel}
+                        pick={pick}
                       />
                     )}
                   </li>
                 );
               })}
             </ol>
+              <div className="px-3 pb-3 pt-2">
+                {day.startStopId && <DayTripControl day={day} stopId={day.startStopId} apply={apply} />}
+              </div>
+            </div>
+            )}
           </section>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -226,9 +267,10 @@ type StopEditorProps = {
   onPickHotel: Props["onPickHotel"];
   onFilterHotels: Props["onFilterHotels"];
   onPendingHotel: Props["onPendingHotel"];
+  pick: Props["pick"];
 };
 
-function StopEditor({ stop, apply, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel }: StopEditorProps) {
+function StopEditor({ stop, apply, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel, pick }: StopEditorProps) {
   const [notes, setNotes] = useState(stop.notes);
   const [minutes, setMinutes] = useState(stop.visitMinutes?.toString() ?? "");
   return (
@@ -276,17 +318,56 @@ function StopEditor({ stop, apply, hotelSearch, onSearchHotels, onPickHotel, onF
           Mark as {stop.stopType === "required" ? "optional" : "required"}
         </button>
       )}
-      {stop.overnight && <HotelEditor stop={stop} apply={apply} hotelSearch={hotelSearch} onSearchHotels={onSearchHotels} onPickHotel={onPickHotel} onFilterHotels={onFilterHotels} onPendingHotel={onPendingHotel} />}
+      {stop.overnight && <HotelEditor stop={stop} apply={apply} hotelSearch={hotelSearch} onSearchHotels={onSearchHotels} onPickHotel={onPickHotel} onFilterHotels={onFilterHotels} onPendingHotel={onPendingHotel} pick={pick} />}
     </div>
   );
 }
 
-type HotelEditorProps = Pick<StopEditorProps, "apply" | "hotelSearch" | "onSearchHotels" | "onPickHotel" | "onFilterHotels" | "onPendingHotel"> & { stop: TripView["stops"][number] };
+/** A round trip from the place this day starts at, planned for this day only. Available under every day, including days without driving. */
+function DayTripControl({ day, stopId, apply }: { day: ItineraryDay; stopId: string; apply: Props["apply"] }) {
+  const [chosen, setChosen] = useState<ChosenPlace | null>(null);
+  const [adding, setAdding] = useState(false);
+  const trip = day.dayTrip;
 
-function HotelEditor({ stop, apply, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel }: HotelEditorProps) {
+  async function addDayTrip() {
+    if (!chosen) return;
+    setAdding(true);
+    const ok = await apply(
+      [{ type: "add_day_trip", stopId, dayIndex: day.startOrdinal, name: chosen.name, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude }],
+      `Added a day trip to ${chosen.name} on day ${day.dayNumber}`,
+    );
+    setAdding(false);
+    if (ok) setChosen(null);
+  }
+
+  if (trip) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded border border-cyan-200 bg-cyan-50 p-2 text-xs">
+        <span className="text-slate-900">
+          Day trip: <span className="font-medium">{trip.name}</span>
+        </span>
+        <button type="button" onClick={() => apply([{ type: "remove_day_trip", stopId, dayTripId: trip.id }], `Removed the day trip on day ${day.dayNumber}`)} className="text-rose-700 hover:underline">
+          Remove
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2 rounded border border-dashed border-slate-300 bg-white p-2">
+      <PlaceSearch label={`Day trip on day ${day.dayNumber}`} onChoose={setChosen} />
+      <button type="button" disabled={!chosen || adding} onClick={addDayTrip} className="justify-self-start rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+        {adding ? "Adding..." : "Add day trip"}
+      </button>
+    </div>
+  );
+}
+
+type HotelEditorProps = Pick<StopEditorProps, "apply" | "hotelSearch" | "onSearchHotels" | "onPickHotel" | "onFilterHotels" | "onPendingHotel" | "pick"> & { stop: TripView["stops"][number] };
+
+function HotelEditor({ stop, apply, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel, pick }: HotelEditorProps) {
   const [searching, setSearching] = useState(false);
   const totalNights = stop.hotels.reduce((sum, hotel) => sum + hotel.nights, 0);
-  const picked = hotelSearch?.hotels.find((hotel) => hotel.externalId === hotelSearch.pickedId) ?? null;
   const visibleHotels = hotelSearch ? filterHotels(hotelSearch.hotels, hotelSearch.query) : [];
 
   async function searchHotels() {
@@ -332,7 +413,7 @@ function HotelEditor({ stop, apply, hotelSearch, onSearchHotels, onPickHotel, on
           </ul>
         </>
       )}
-      <NewHotelForm key={picked?.externalId ?? "blank"} stop={stop} apply={apply} prefill={picked} onPending={onPendingHotel} />
+      <NewHotelForm key={pick ? pick.seq : "blank"} stop={stop} apply={apply} prefill={pick?.hotel ?? null} onPending={onPendingHotel} />
     </div>
   );
 }
@@ -345,9 +426,6 @@ function NewHotelForm({ stop, apply, prefill, onPending }: { stop: TripView["sto
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(prefill ? { latitude: prefill.latitude, longitude: prefill.longitude } : null);
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
-
-  // Leaving the form, or switching to another stop, removes the unsaved preview from the map.
-  useEffect(() => () => onPending(null), [onPending]);
 
   async function locate() {
     setLocating(true);

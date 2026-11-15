@@ -7,11 +7,7 @@ import type { TripView } from "./tripService";
 
 const TYPE_LABEL: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional", return: "Return to start" };
 const METERS_PER_MILE = 1609.344;
-const CSV_COLUMNS = [
-  "day", "date", "leg", "start_location", "end_location",
-  "end_type", "end_source", "end_address", "drive_miles", "drive_min", "route_status", "visit_minutes", "visit_minutes_is_estimate",
-  "overnight", "notes", "generated_at",
-];
+const CSV_COLUMNS = ["day", "date", "leg", "start_location", "end_location", "drive_miles", "drive_time", "overnight", "notes", "generated_at"];
 
 /**
  * Spreadsheet apps run text starting with = + - @ as a formula. Stop names and notes come from users,
@@ -32,17 +28,11 @@ export function neutralizeFormulas(row: Record<string, unknown>): Record<string,
  */
 export function buildItineraryCsv(view: TripView, generatedAt: Date): string {
   const stopsById = new Map(view.stops.map((stop) => [stop.id, stop]));
-  const legInfoByEndStop = new Map<string, { day: number; date: string; overnight: boolean; visitMinutes: number; visitIsEstimate: boolean }>();
+  const legInfoByEndStop = new Map<string, { day: number; date: string; overnight: boolean }>();
   for (const day of view.itinerary.days) {
     for (const item of day.items) {
       if (!item.fromPrevious || legInfoByEndStop.has(item.stopId)) continue;
-      legInfoByEndStop.set(item.stopId, {
-        day: day.dayNumber,
-        date: day.date ?? "",
-        overnight: day.overnightStopId === item.stopId,
-        visitMinutes: item.visitMinutes,
-        visitIsEstimate: item.visitMinutesIsEstimate,
-      });
+      legInfoByEndStop.set(item.stopId, { day: day.dayNumber, date: day.date ?? "", overnight: day.overnightStopId === item.stopId });
     }
   }
 
@@ -57,14 +47,8 @@ export function buildItineraryCsv(view: TripView, generatedAt: Date): string {
       leg: index + 1,
       start_location: start.name,
       end_location: end.name,
-      end_type: TYPE_LABEL[end.stopType] ?? end.stopType,
-      end_source: end.source,
-      end_address: end.address,
       drive_miles: routed ? (leg.distanceMeters / METERS_PER_MILE).toFixed(1) : "",
-      drive_min: routed ? Math.round(leg.durationSeconds / 60) : "",
-      route_status: leg.status,
-      visit_minutes: info?.visitMinutes ?? "",
-      visit_minutes_is_estimate: info ? (info.visitIsEstimate ? "yes" : "no") : "",
+      drive_time: routed ? formatDuration(leg.durationSeconds) : "",
       overnight: info?.overnight ? "yes" : "no",
       notes: end.notes,
       generated_at: generatedAt.toISOString(),

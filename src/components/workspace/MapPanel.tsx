@@ -88,6 +88,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
       map.addSource("hotels", { type: "geojson", data: EMPTY });
       map.addSource("saved-hotels", { type: "geojson", data: EMPTY });
       map.addSource("pending-hotel", { type: "geojson", data: EMPTY });
+      map.addSource("day-trips", { type: "geojson", data: EMPTY });
       map.addLayer({ id: "preview-line", type: "line", source: "preview", paint: { "line-color": "#4f46e5", "line-width": 4, "line-dasharray": [2, 2], "line-opacity": 0.9 } }, "route-line");
       map.addLayer({
         id: "overnight-halo",
@@ -190,6 +191,23 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
         layout: { "text-field": ["concat", ["get", "name"], " (not saved yet)"], "text-size": 11, "text-offset": [0, 1.2], "text-anchor": "top" },
         paint: { "text-color": "#1e3a8a", "text-halo-color": "#ffffff", "text-halo-width": 2 },
       });
+      map.addLayer({
+        id: "day-trip-points",
+        type: "circle",
+        source: "day-trips",
+        paint: { "circle-color": "#0891b2", "circle-radius": 7, "circle-stroke-width": 2, "circle-stroke-color": "#ffffff" },
+      });
+      map.addLayer({
+        id: "day-trip-labels",
+        type: "symbol",
+        source: "day-trips",
+        layout: { "text-field": ["get", "name"], "text-size": 11, "text-offset": [0, 1.2], "text-anchor": "top" },
+        paint: { "text-color": "#155e75", "text-halo-color": "#ffffff", "text-halo-width": 2 },
+      });
+      map.on("click", "day-trip-points", (event) => {
+        const feature = event.features?.[0];
+        if (feature?.geometry.type === "Point") openHotelPopup(feature.geometry.coordinates as [number, number], feature.properties?.name, feature.properties?.address);
+      });
       map.on("click", "saved-hotel-points", (event) => {
         const feature = event.features?.[0];
         if (feature?.geometry.type === "Point") openHotelPopup(feature.geometry.coordinates as [number, number], feature.properties?.name, feature.properties?.address);
@@ -210,7 +228,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
         if (!feature || feature.geometry.type !== "Point" || feature.properties?.cluster_id === undefined) return;
         source.getClusterExpansionZoom(feature.properties.cluster_id).then((zoom) => map.easeTo({ center: feature.geometry.type === "Point" ? (feature.geometry.coordinates as [number, number]) : map.getCenter(), zoom }));
       });
-      for (const layer of ["place-clusters", "place-points", "hotel-points", "saved-hotel-points"]) {
+      for (const layer of ["place-clusters", "place-points", "hotel-points", "saved-hotel-points", "day-trip-points"]) {
         map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
         map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
       }
@@ -355,6 +373,22 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
     savedHotelKeys.current = keys;
     const moved = previous ? located.filter((hotel) => previous.get(hotel.id) !== keys.get(hotel.id)) : [];
     if (moved.length) flyToPoint(map, moved[moved.length - 1].longitude, moved[moved.length - 1].latitude);
+  }, [trip.stops, mapReady]);
+
+  // Day-trip destinations planned from overnight stops.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    (map.getSource("day-trips") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: trip.stops.flatMap((stop) =>
+        stop.dayTrips.map((dayTrip) => ({
+          type: "Feature" as const,
+          properties: { id: dayTrip.id, name: dayTrip.name, address: dayTrip.address },
+          geometry: { type: "Point" as const, coordinates: [dayTrip.longitude, dayTrip.latitude] },
+        })),
+      ),
+    });
   }, [trip.stops, mapReady]);
 
   // The located-but-unsaved hotel from the add form. Zooms to it each time it is located.

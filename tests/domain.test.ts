@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildItinerary, DEFAULT_VISIT_MINUTES, type LegMetrics } from "@/domain/itinerary";
+import { buildItinerary, DEFAULT_VISIT_MINUTES, type DayTripLeg, type LegMetrics } from "@/domain/itinerary";
 import { haversineMeters, sampleLine } from "@/domain/geo";
 import { applyOperations, DEFAULT_PREFERENCES, nearestNeighborOrder, type Stop, type TripOperation } from "@/domain/trip";
 
@@ -16,6 +16,7 @@ const stop = (id: string, stopType: Stop["stopType"], latitude: number, longitud
   visitMinutes: null,
   overnight: false,
   hotels: [],
+  dayTrips: [],
   ...extra,
 });
 
@@ -200,6 +201,54 @@ describe("hotels at overnight stops", () => {
   it("turns a stop into an overnight stop with update_stop", () => {
     const result = applyOperations({ stops: baseStops(), preferences: DEFAULT_PREFERENCES }, [{ type: "update_stop", stopId: "lunch", overnight: true }]);
     expect(stopNamed(result.stops, "lunch").overnight).toBe(true);
+  });
+});
+
+describe("day trips", () => {
+  const legs = (...durations: number[]): LegMetrics[] =>
+    durations.map((seconds) => ({ distanceMeters: seconds * 20, durationSeconds: seconds, provider: "test", status: "ok" }));
+  const stopsWithNights = (nights: number) => [
+    stop("o", "origin", 0, 0, 0),
+    stop("a", "optional", 0, 1, 1, { overnight: true, hotels: [{ id: "h1", name: "Inn", address: "", nights }] }),
+    stop("d", "destination", 0, 3, 2),
+  ];
+  const dayTrip = (stopId: string, dayIndex: number, name: string): DayTripLeg => ({ id: name, stopId, dayIndex, name, distanceMeters: 40000, durationSeconds: 3600, status: "ok" });
+  const plan = (nights: number, dayTrips: DayTripLeg[]) =>
+    buildItinerary({ stops: stopsWithNights(nights), legs: legs(3600, 3600), preferences: { maxDailyDriveMinutes: 360 }, durationDays: null, startDate: null, dayTrips });
+
+  // With three nights at "a": day 1 drives to "a", days 2 and 3 rest there (ordinals 1 and 2), day 4 drives on (ordinal 3).
+  it("applies a day trip to the one day it was planned for", () => {
+    const result = plan(3, [dayTrip("a", 1, "Wolf Creek")]);
+    expect(result.days.map((d) => d.kind)).toEqual(["driving", "rest", "rest", "driving"]);
+    expect(result.days[1].dayTrip).toEqual({ id: "Wolf Creek", name: "Wolf Creek", distanceMeters: 40000, durationSeconds: 3600, status: "ok" });
+    expect(result.days[1].driveDurationSeconds).toBe(3600);
+    expect(result.days[2].dayTrip).toBeNull();
+    expect(result.days[3].dayTrip).toBeNull();
+  });
+
+  it("adds a day trip to a driving day on top of that day's drive", () => {
+    const result = plan(3, [dayTrip("a", 3, "Wolf Creek")]);
+    expect(result.days[3].dayTrip?.name).toBe("Wolf Creek");
+    expect(result.days[3].driveDurationSeconds).toBe(3600 + 3600);
+    expect(result.days[1].dayTrip).toBeNull();
+  });
+
+  it("warns about a day trip that no longer matches any day", () => {
+    expect(plan(3, [dayTrip("a", 9, "Wolf Creek")]).warnings.join(" ")).toMatch(/day trip to Wolf Creek no longer matches a day/);
+  });
+
+  it("adds one day trip per day and removes it again", () => {
+    const base = { preferences: DEFAULT_PREFERENCES };
+    const added = applyOperations({ ...base, stops: stopsWithNights(3) }, [{ type: "add_day_trip", stopId: "a", dayIndex: 1, name: "Wolf Creek", address: "", latitude: 37.2, longitude: -107.0 }]);
+    const tripId = added.stops.find((item) => item.id === "a")!.dayTrips[0].id;
+    expect(added.stops.find((item) => item.id === "a")!.dayTrips).toEqual([expect.objectContaining({ name: "Wolf Creek", dayIndex: 1, latitude: 37.2, longitude: -107.0 })]);
+
+    expect(() =>
+      applyOperations({ ...base, stops: added.stops }, [{ type: "add_day_trip", stopId: "a", dayIndex: 1, name: "Pagosa Peak", address: "", latitude: 37.3, longitude: -107.1 }]),
+    ).toThrow(/already has a day trip/);
+
+    const removed = applyOperations({ ...base, stops: added.stops }, [{ type: "remove_day_trip", stopId: "a", dayTripId: tripId }]);
+    expect(removed.stops.find((item) => item.id === "a")!.dayTrips).toEqual([]);
   });
 });
 

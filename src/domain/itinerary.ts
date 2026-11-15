@@ -7,6 +7,10 @@ const PACKED_DAY_MINUTES = 12 * 60;
 
 export type LegMetrics = { distanceMeters: number; durationSeconds: number; provider: string; status: "ok" | "missing" };
 
+/** Round trip from the place a day starts at, to a destination and back. Its distance and time are that day's driving. */
+export type DayTripLeg = { id: string; stopId: string; dayIndex: number; name: string; distanceMeters: number; durationSeconds: number; status: "ok" | "missing" };
+export type ItineraryDayTrip = Omit<DayTripLeg, "stopId" | "dayIndex">;
+
 export type ItineraryItem = {
   stopId: string;
   name: string;
@@ -23,11 +27,14 @@ export type ItineraryDay = {
   date: string | null;
   kind: "driving" | "rest";
   startStopId: string | null;
+  /** Counts the days that start at startStopId, from 1. Day trips are matched to days by this number. */
+  startOrdinal: number;
   overnightStopId: string | null;
   items: ItineraryItem[];
   driveDistanceMeters: number;
   driveDurationSeconds: number;
   visitMinutes: number;
+  dayTrip: ItineraryDayTrip | null;
   warnings: string[];
 };
 
@@ -45,6 +52,7 @@ export type BuildItineraryInput = {
   preferences: Pick<TripPreferences, "maxDailyDriveMinutes">;
   durationDays: number | null;
   startDate: string | null;
+  dayTrips?: DayTripLeg[];
 };
 
 function addDays(isoDate: string, days: number): string {
@@ -87,16 +95,26 @@ export function buildItinerary(input: BuildItineraryInput): ItineraryResult {
     return { provisional: true, days: [], warnings: [], totals: { distanceMeters: 0, driveDurationSeconds: 0, visitMinutes: 0, drivingDays: 0 } };
   }
 
+  const startCounts = new Map<string, number>();
+  const nextStartOrdinal = (startStop: Stop | null): number => {
+    if (!startStop) return 0;
+    const count = (startCounts.get(startStop.id) ?? 0) + 1;
+    startCounts.set(startStop.id, count);
+    return count;
+  };
+
   const newDay = (startStop: Stop | null): ItineraryDay => ({
     dayNumber: days.length + 1,
     date: input.startDate ? addDays(input.startDate, days.length) : null,
     kind: "driving",
     startStopId: startStop?.id ?? null,
+    startOrdinal: nextStartOrdinal(startStop),
     overnightStopId: null,
     items: startStop ? [makeItem(startStop, null)] : [],
     driveDistanceMeters: 0,
     driveDurationSeconds: 0,
     visitMinutes: startStop ? visitFor(startStop).minutes : 0,
+    dayTrip: null,
     warnings: [],
   });
 
@@ -146,8 +164,24 @@ export function buildItinerary(input: BuildItineraryInput): ItineraryResult {
     }
   }
 
+  // A day trip belongs to one day only: the day that starts at its place with the same ordinal.
+  const dayTrips = input.dayTrips ?? [];
+  const matchedDayTrips = new Set<DayTripLeg>();
+  for (const day of days) {
+    const trip = dayTrips.find((item) => item.stopId === day.startStopId && item.dayIndex === day.startOrdinal);
+    if (!trip) continue;
+    matchedDayTrips.add(trip);
+    day.dayTrip = { id: trip.id, name: trip.name, distanceMeters: trip.distanceMeters, durationSeconds: trip.durationSeconds, status: trip.status };
+    day.driveDistanceMeters += trip.distanceMeters;
+    day.driveDurationSeconds += trip.durationSeconds;
+  }
+  for (const trip of dayTrips) {
+    if (!matchedDayTrips.has(trip)) globalWarnings.push(`The day trip to ${trip.name} no longer matches a day. Remove it and add it again on the day you want.`);
+  }
+
   days.forEach((day, index) => {
     if (index === days.length - 1 && day.kind === "driving") day.overnightStopId = null;
+    if (day.dayTrip?.status === "missing") day.warnings.push(`The route for the day trip to ${day.dayTrip.name} is not calculated yet.`);
     if (day.driveDurationSeconds > limitSeconds) day.warnings.push("Driving exceeds your daily limit on this day.");
     if (day.driveDurationSeconds + day.visitMinutes * 60 > PACKED_DAY_MINUTES) day.warnings.push("This day looks packed: driving plus estimated visit time is over 12 hours.");
     globalWarnings.push(...day.warnings.map((warning) => `Day ${day.dayNumber}: ${warning}`));
