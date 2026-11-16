@@ -72,6 +72,12 @@ describe("chooseOvernightStops", () => {
     expect(suggestions.map((s) => s.settlement.id)).toEqual(["farmington"]);
   });
 
+  it("treats each planned night at an existing stop as covering a split point", () => {
+    const towns = [town("early", 0.33, 40000), town("late", 0.66, 40000)];
+    const suggestions = chooseOvernightStops(18 * HOUR, 6 * HOUR, towns, 10000, [0.33, 0.33]);
+    expect(suggestions.map((s) => s.afterDay)).toEqual([2]);
+  });
+
   it("never uses the same town for two nights", () => {
     const suggestions = chooseOvernightStops(18 * HOUR, 6 * HOUR, [town("only", 0.5, 90000)], 10000);
     expect(new Set(suggestions.map((s) => s.settlement.id)).size).toBe(suggestions.length);

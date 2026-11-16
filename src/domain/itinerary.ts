@@ -1,15 +1,16 @@
+import type { LngLat } from "./geo";
 import type { Stop, TripPreferences } from "./trip";
 import { nightsAt, sortStops } from "./trip";
 
 /** Used when a stop has no visit duration. The UI labels these values as estimates. */
 export const DEFAULT_VISIT_MINUTES = 60;
-const PACKED_DAY_MINUTES = 12 * 60;
+const PACKED_DAY_SECONDS = 12 * 60 * 60;
 
 export type LegMetrics = { distanceMeters: number; durationSeconds: number; provider: string; status: "ok" | "missing" };
 
 /** Round trip from the place a day starts at, to a destination and back. Its distance and time are that day's driving. */
-export type DayTripLeg = { id: string; stopId: string; dayIndex: number; name: string; distanceMeters: number; durationSeconds: number; status: "ok" | "missing" };
-export type ItineraryDayTrip = Omit<DayTripLeg, "stopId" | "dayIndex">;
+export type DayTripLeg = { id: string; stopId: string; dayIndex: number; name: string; notes: string; distanceMeters: number; durationSeconds: number; status: "ok" | "missing"; geometry: LngLat[] };
+export type ItineraryDayTrip = Omit<DayTripLeg, "stopId" | "dayIndex" | "geometry">;
 
 export type ItineraryItem = {
   stopId: string;
@@ -171,7 +172,7 @@ export function buildItinerary(input: BuildItineraryInput): ItineraryResult {
     const trip = dayTrips.find((item) => item.stopId === day.startStopId && item.dayIndex === day.startOrdinal);
     if (!trip) continue;
     matchedDayTrips.add(trip);
-    day.dayTrip = { id: trip.id, name: trip.name, distanceMeters: trip.distanceMeters, durationSeconds: trip.durationSeconds, status: trip.status };
+    day.dayTrip = { id: trip.id, name: trip.name, notes: trip.notes, distanceMeters: trip.distanceMeters, durationSeconds: trip.durationSeconds, status: trip.status };
     day.driveDistanceMeters += trip.distanceMeters;
     day.driveDurationSeconds += trip.durationSeconds;
   }
@@ -183,7 +184,7 @@ export function buildItinerary(input: BuildItineraryInput): ItineraryResult {
     if (index === days.length - 1 && day.kind === "driving") day.overnightStopId = null;
     if (day.dayTrip?.status === "missing") day.warnings.push(`The route for the day trip to ${day.dayTrip.name} is not calculated yet.`);
     if (day.driveDurationSeconds > limitSeconds) day.warnings.push("Driving exceeds your daily limit on this day.");
-    if (day.driveDurationSeconds + day.visitMinutes * 60 > PACKED_DAY_MINUTES) day.warnings.push("This day looks packed: driving plus estimated visit time is over 12 hours.");
+    if (day.driveDurationSeconds + day.visitMinutes * 60 > PACKED_DAY_SECONDS) day.warnings.push("This day looks packed: driving plus estimated visit time is over 12 hours.");
     globalWarnings.push(...day.warnings.map((warning) => `Day ${day.dayNumber}: ${warning}`));
   });
 

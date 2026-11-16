@@ -89,6 +89,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
       map.addSource("saved-hotels", { type: "geojson", data: EMPTY });
       map.addSource("pending-hotel", { type: "geojson", data: EMPTY });
       map.addSource("day-trips", { type: "geojson", data: EMPTY });
+      map.addSource("day-trip-routes", { type: "geojson", data: EMPTY });
       map.addLayer({ id: "preview-line", type: "line", source: "preview", paint: { "line-color": "#4f46e5", "line-width": 4, "line-dasharray": [2, 2], "line-opacity": 0.9 } }, "route-line");
       map.addLayer({
         id: "overnight-halo",
@@ -192,6 +193,12 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
         paint: { "text-color": "#1e3a8a", "text-halo-color": "#ffffff", "text-halo-width": 2 },
       });
       map.addLayer({
+        id: "day-trip-route-line",
+        type: "line",
+        source: "day-trip-routes",
+        paint: { "line-color": "#a21caf", "line-width": 4, "line-opacity": 0.9, "line-dasharray": [2, 1.5] },
+      });
+      map.addLayer({
         id: "day-trip-points",
         type: "circle",
         source: "day-trips",
@@ -258,6 +265,15 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
       setMapReady(false);
     };
   }, [webgl]);
+
+  // Dragging the panel dividers resizes the container without a window resize, so the WebGL canvas must follow it.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !mapReady) return;
+    const observer = new ResizeObserver(() => mapRef.current?.resize());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [mapReady]);
 
   // Stops are rendered as HTML markers so they can be focusable buttons with accessible names.
   useEffect(() => {
@@ -375,6 +391,16 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
     if (moved.length) flyToPoint(map, moved[moved.length - 1].longitude, moved[moved.length - 1].latitude);
   }, [trip.stops, mapReady]);
 
+  // Round-trip routes of the day trips, drawn in a different colour from the trip's route.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    (map.getSource("day-trip-routes") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: trip.dayTripRoutes.map((route) => ({ type: "Feature" as const, properties: { id: route.id, name: route.name }, geometry: { type: "LineString" as const, coordinates: route.geometry } })),
+    });
+  }, [trip.dayTripRoutes, mapReady]);
+
   // Day-trip destinations planned from overnight stops.
   useEffect(() => {
     const map = mapRef.current;
@@ -442,6 +468,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
         <p>■ Start · ◆ Destination · ● Required · ○ Optional</p>
         <p>● Suggested place · ● Saved place · ● Overnight suggestion</p>
         <p>Route: <span className="text-sky-600">blue = outbound</span> · <span className="text-teal-600">teal = return</span></p>
+        <p>Day trip: <span className="text-cyan-600">cyan = destination</span> · <span className="text-fuchsia-700">dashed purple = route</span></p>
       </div>
       {trip.modes.routing === "demo" && (
         <div className="absolute left-3 top-3 rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900 shadow">DEMO ROUTING: distances and times are estimates, not live road data</div>

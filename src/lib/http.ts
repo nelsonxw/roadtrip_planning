@@ -8,6 +8,13 @@ type FetchJsonOptions = RequestInit & {
 
 const RETRY_DELAY_MS = 400;
 
+/** Says what the provider's status means, so the user can act on it (for example a spent quota). */
+function messageForStatus(provider: string, status: number): string {
+  if (status === 401 || status === 403) return `${provider} refused the request (HTTP ${status}). The API key may be over its quota or disabled.`;
+  if (status === 429) return `${provider} is rate limiting requests (HTTP 429). Wait a moment and try again.`;
+  return `${provider} responded with HTTP ${status}.`;
+}
+
 function kindForStatus(status: number): ProviderErrorKind {
   if (status === 429) return "rate_limited";
   if (status === 401 || status === 403) return "unauthorized";
@@ -29,7 +36,7 @@ export async function fetchProviderJson<T>(url: string, options: FetchJsonOption
     try {
       const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) {
-        lastError = new ProviderError(provider, kindForStatus(response.status), `${provider} responded with HTTP ${response.status}.`);
+        lastError = new ProviderError(provider, kindForStatus(response.status), messageForStatus(provider, response.status));
       } else {
         try {
           return (await response.json()) as T;

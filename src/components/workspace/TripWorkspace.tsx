@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { PlaceView } from "@/server/tripService";
 import type { HotelCandidate } from "@/services/types";
 import { api } from "@/lib/clientApi";
@@ -14,6 +14,18 @@ import { filterHotels, type HotelSearch, type PendingHotel } from "./hotelSearch
 
 type MobileTab = "map" | "trip" | "chat";
 type SidePanel = "itinerary" | "places";
+
+const DIVIDER_PX = 6;
+const MIN_SIDE_PX = 240;
+const MIN_MAP_PX = 320;
+const COLLAPSED_CHAT_PX = 48;
+const KEY_STEP_PX = 16;
+
+/** Keeps a side panel between its minimum width and the room left after the other panel and the map. */
+function clampPanel(width: number, total: number, otherPanel: number): number {
+  const maxWidth = Math.max(MIN_SIDE_PX, total - otherPanel - MIN_MAP_PX - 2 * DIVIDER_PX);
+  return Math.round(Math.min(Math.max(width, MIN_SIDE_PX), maxWidth));
+}
 
 const STATUS_TEXT = { loading: "Loading…", saved: "All changes saved", saving: "Saving…", error: "Not saved · see message" } as const;
 
@@ -45,6 +57,8 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   const [chatOpen, setChatOpen] = useState(true);
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [leftWidth, setLeftWidth] = useState(380);
+  const [rightWidth, setRightWidth] = useState(340);
   const [hotelSearch, setHotelSearch] = useState<HotelSearch | null>(null);
   const [pendingHotel, setPendingHotel] = useState<PendingHotel | null>(null);
   const [pick, setPick] = useState<{ seq: number; hotel: HotelCandidate } | null>(null);
@@ -95,6 +109,36 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   };
   const addPlace = (place: PlaceView) => trip.runPlaceAction(`/api/trips/${tripId}/places/${place.id}/add`);
 
+  const chatPx = chatOpen ? rightWidth : COLLAPSED_CHAT_PX;
+
+  const startDrag = (divider: "left" | "right") => (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startLeft = leftWidth;
+    const startRight = rightWidth;
+    const total = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+    const move = (moveEvent: PointerEvent) => {
+      const dx = moveEvent.clientX - startX;
+      if (divider === "left") setLeftWidth(clampPanel(startLeft + dx, total, chatOpen ? startRight : COLLAPSED_CHAT_PX));
+      else setRightWidth(clampPanel(startRight - dx, total, startLeft));
+    };
+    const release = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+  };
+
+  const nudge = (divider: "left" | "right") => (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === "ArrowLeft" ? -KEY_STEP_PX : event.key === "ArrowRight" ? KEY_STEP_PX : 0;
+    if (!step) return;
+    event.preventDefault();
+    const total = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+    if (divider === "left") setLeftWidth(clampPanel(leftWidth + step, total, chatPx));
+    else setRightWidth(clampPanel(rightWidth - step, total, leftWidth));
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
@@ -127,8 +171,11 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
         ))}
       </nav>
 
-      <div className="flex min-h-0 flex-1">
-        <aside className={`${mobileTab === "trip" ? "flex" : "hidden"} w-full flex-col border-r border-slate-200 bg-white md:flex md:w-[380px] md:shrink-0`} aria-label="Itinerary and places">
+      <div
+        className="flex min-h-0 flex-1"
+        style={{ "--left-width": `${leftWidth}px`, "--right-width": `${rightWidth}px` } as CSSProperties}
+      >
+        <aside className={`${mobileTab === "trip" ? "flex" : "hidden"} w-full flex-col border-r border-slate-200 bg-white md:flex md:w-[var(--left-width)] md:shrink-0`} aria-label="Itinerary and places">
           <div role="tablist" aria-label="Itinerary or places" className="flex border-b border-slate-200 text-sm">
             {(["itinerary", "places"] as SidePanel[]).map((panel) => (
               <button key={panel} role="tab" aria-selected={sidePanel === panel} type="button" onClick={() => setSidePanel(panel)} className={`flex-1 py-2 font-medium capitalize ${sidePanel === panel ? "border-b-2 border-sky-600 text-sky-700" : "text-slate-600"}`}>
@@ -171,6 +218,17 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
           </div>
         </aside>
 
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize itinerary panel"
+          aria-valuenow={leftWidth}
+          tabIndex={0}
+          onPointerDown={startDrag("left")}
+          onKeyDown={nudge("left")}
+          className="hidden w-[6px] shrink-0 cursor-col-resize bg-slate-200 hover:bg-sky-300 focus:bg-sky-400 focus:outline-none md:block"
+        />
+
         <main className={`${mobileTab === "map" ? "flex" : "hidden"} min-w-0 flex-1 md:flex`} aria-label="Trip map">
           <div className="min-h-[400px] flex-1">
             <MapPanel
@@ -192,7 +250,20 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
           </div>
         </main>
 
-        <section className={`${mobileTab === "chat" ? "flex" : "hidden"} w-full flex-col border-l border-slate-200 bg-white md:flex md:shrink-0 ${chatOpen ? "md:w-[340px]" : "md:w-12"}`} aria-label="Trip assistant">
+        {chatOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize assistant panel"
+            aria-valuenow={rightWidth}
+            tabIndex={0}
+            onPointerDown={startDrag("right")}
+            onKeyDown={nudge("right")}
+            className="hidden w-[6px] shrink-0 cursor-col-resize bg-slate-200 hover:bg-sky-300 focus:bg-sky-400 focus:outline-none md:block"
+          />
+        )}
+
+        <section className={`${mobileTab === "chat" ? "flex" : "hidden"} w-full flex-col border-l border-slate-200 bg-white md:flex md:shrink-0 ${chatOpen ? "md:w-[var(--right-width)]" : "md:w-12"}`} aria-label="Trip assistant">
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
             {chatOpen && <h2 className="text-sm font-semibold text-slate-900">Assistant</h2>}
             <button type="button" className="hidden rounded border px-2 py-0.5 text-xs md:block" aria-expanded={chatOpen} onClick={() => setChatOpen(!chatOpen)}>

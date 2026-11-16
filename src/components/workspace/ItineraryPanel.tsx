@@ -69,7 +69,7 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
     if (!chosen) return;
     setAdding(true);
     const ok = await apply(
-      [{ type: "add_stop", name: chosen.name, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude, stopType: addType, leg: addLeg, overnight: addOvernight, source: "user", notes: "", visitMinutes: null }],
+      [{ type: "add_stop", name: chosen.name || chosen.label, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude, stopType: addType, leg: addLeg, overnight: addOvernight, source: "user", notes: "", visitMinutes: null }],
       `Added ${chosen.name}`,
     );
     setAdding(false);
@@ -187,8 +187,8 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
                 </button>
               </h3>
             </header>
-            {isOpen && (
-            <div id={`day-${day.dayNumber}-body`}>
+            {/* Kept in the page when closed, so a half-filled day trip form is not lost when the user switches days. */}
+            <div id={`day-${day.dayNumber}-body`} hidden={!isOpen}>
               <p className="px-3 pt-2 text-xs text-slate-600">
                 {formatDistance(day.driveDistanceMeters)} · {formatDuration(day.driveDurationSeconds)}
               </p>
@@ -207,7 +207,24 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
                 const position = intermediate.findIndex((s) => s.id === stop.id);
                 const movable = position >= 0;
                 return (
-                  <li key={`${day.dayNumber}-${item.stopId}`} className={`p-3 ${isSelected ? "bg-amber-50" : ""}`}>
+                  <li
+                    key={`${day.dayNumber}-${item.stopId}`}
+                    className={`p-3 ${isSelected ? "bg-amber-50" : ""} ${movable ? "cursor-move" : ""}`}
+                    draggable={movable}
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData("text/plain", stop.id);
+                      event.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragOver={(event) => {
+                      if (movable) event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      if (!movable) return;
+                      event.preventDefault();
+                      const draggedId = event.dataTransfer.getData("text/plain");
+                      if (draggedId && draggedId !== stop.id) move(draggedId, position);
+                    }}
+                  >
                     <div className="flex items-start gap-2">
                       <button type="button" onClick={() => onSelectStop(stop.id)} aria-pressed={isSelected} className="flex-1 text-left focus:outline-none focus:ring-2 focus:ring-sky-400 rounded">
                         <span className="font-medium text-slate-900">{stop.name}</span>
@@ -250,7 +267,6 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
                 {day.startStopId && <DayTripControl day={day} stopId={day.startStopId} apply={apply} />}
               </div>
             </div>
-            )}
           </section>
           );
         })}
@@ -323,9 +339,29 @@ function StopEditor({ stop, apply, hotelSearch, onSearchHotels, onPickHotel, onF
   );
 }
 
+/** Notes on a saved day trip, edited in place. Saved when the field loses focus, and only if the text changed. */
+function DayTripNotes({ notes, onSave }: { notes: string; onSave: (notes: string) => void }) {
+  const [draft, setDraft] = useState(notes);
+  return (
+    <textarea
+      aria-label="Day trip notes"
+      placeholder="Add notes"
+      value={draft}
+      maxLength={1000}
+      rows={2}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (draft !== notes) onSave(draft);
+      }}
+      className="rounded border border-cyan-200 bg-white px-2 py-1 text-xs"
+    />
+  );
+}
+
 /** A round trip from the place this day starts at, planned for this day only. Available under every day, including days without driving. */
 function DayTripControl({ day, stopId, apply }: { day: ItineraryDay; stopId: string; apply: Props["apply"] }) {
   const [chosen, setChosen] = useState<ChosenPlace | null>(null);
+  const [notes, setNotes] = useState("");
   const [adding, setAdding] = useState(false);
   const trip = day.dayTrip;
 
@@ -333,29 +369,48 @@ function DayTripControl({ day, stopId, apply }: { day: ItineraryDay; stopId: str
     if (!chosen) return;
     setAdding(true);
     const ok = await apply(
-      [{ type: "add_day_trip", stopId, dayIndex: day.startOrdinal, name: chosen.name, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude }],
+      [{ type: "add_day_trip", stopId, dayIndex: day.startOrdinal, name: chosen.name || chosen.label, address: chosen.label, latitude: chosen.latitude, longitude: chosen.longitude, notes: notes.trim() }],
       `Added a day trip to ${chosen.name} on day ${day.dayNumber}`,
     );
     setAdding(false);
-    if (ok) setChosen(null);
+    if (ok) {
+      setChosen(null);
+      setNotes("");
+    }
   }
 
   if (trip) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded border border-cyan-200 bg-cyan-50 p-2 text-xs">
-        <span className="text-slate-900">
-          Day trip: <span className="font-medium">{trip.name}</span>
-        </span>
-        <button type="button" onClick={() => apply([{ type: "remove_day_trip", stopId, dayTripId: trip.id }], `Removed the day trip on day ${day.dayNumber}`)} className="text-rose-700 hover:underline">
-          Remove
-        </button>
+      <div className="grid gap-1 rounded border border-cyan-200 bg-cyan-50 p-2 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-900">
+            Day trip: <span className="font-medium">{trip.name}</span>
+          </span>
+          <button type="button" onClick={() => apply([{ type: "remove_day_trip", stopId, dayTripId: trip.id }], `Removed the day trip on day ${day.dayNumber}`)} className="text-rose-700 hover:underline">
+            Remove
+          </button>
+        </div>
+        <DayTripNotes
+          key={`${trip.id}-${trip.notes ?? ""}`}
+          notes={trip.notes ?? ""}
+          onSave={(next) => apply([{ type: "update_day_trip", stopId, dayTripId: trip.id, notes: next }], `Updated the notes for day ${day.dayNumber}`)}
+        />
       </div>
     );
   }
 
   return (
     <div className="grid gap-2 rounded border border-dashed border-slate-300 bg-white p-2">
-      <PlaceSearch label={`Day trip on day ${day.dayNumber}`} onChoose={setChosen} />
+      <PlaceSearch label={`Any day trip planned on day ${day.dayNumber}?`} onChoose={setChosen} />
+      <textarea
+        aria-label="Day trip notes"
+        placeholder="Notes (optional)"
+        value={notes}
+        maxLength={1000}
+        rows={2}
+        onChange={(event) => setNotes(event.target.value)}
+        className="rounded border border-slate-300 px-2 py-1 text-xs"
+      />
       <button type="button" disabled={!chosen || adding} onClick={addDayTrip} className="justify-self-start rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50">
         {adding ? "Adding..." : "Add day trip"}
       </button>

@@ -45,6 +45,8 @@ export function describeOperation(operation: TripOperation, stops: Stop[]): stri
       return `Add a day trip from ${nameOf(operation.stopId)} to ${operation.name}`;
     case "remove_day_trip":
       return `Remove a day trip from ${nameOf(operation.stopId)}`;
+    case "update_day_trip":
+      return `Update the notes of a day trip from ${nameOf(operation.stopId)}`;
     case "optimize_order":
       return "Reorder stops to shorten the route";
     case "set_round_trip":

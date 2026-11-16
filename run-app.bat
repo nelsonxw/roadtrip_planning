@@ -67,7 +67,7 @@ if not errorlevel 1 (
   if errorlevel 1 (
     echo Starting the local database in a separate window...
     start "RoadTrip database (keep open)" cmd /k "npm run db:dev"
-    timeout /t 15 /nobreak >nul
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\wait-for-port.ps1" -Port 5433 -TimeoutSeconds 30
   )
 )
 
@@ -87,8 +87,15 @@ if not errorlevel 1 (
   exit /b 1
 )
 
-rem 9. Production build from the current source, so the server never runs an older build (skipped in dev mode)
+rem 9. Production build, only when the source changed since the last build (skipped in dev mode; --rebuild forces it)
 if /i "%~1"=="--dev" goto start_server
+if /i "%~1"=="--rebuild" goto build
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\needs-build.ps1"
+if not errorlevel 1 (
+  echo The build is up to date.
+  goto start_server
+)
+:build
 echo Building the app. This takes about a minute...
 call npm run build
 if errorlevel 1 (
@@ -104,7 +111,7 @@ if /i "%~1"=="--dev" (
   start "RoadTrip server (keep open)" cmd /k "npx next start -p 3000"
 )
 echo Waiting for the server to start...
-timeout /t 8 /nobreak >nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\wait-for-port.ps1" -Port 3000 -TimeoutSeconds 60
 start "" http://localhost:3000
 echo.
 echo RoadTrip AI is running at http://localhost:3000

@@ -1,5 +1,6 @@
 import { chooseOvernightStops, cumulativeMeters, DEFAULT_MIN_POPULATION, drivingDaysNeeded, MAX_DETOUR_METERS, MAX_FRACTION_OFFSET, projectFraction, type Settlement } from "@/domain/overnight";
 import { distanceToLineMeters, haversineMeters, type LngLat } from "@/domain/geo";
+import { nightsAt } from "@/domain/trip";
 import { AppError } from "@/lib/errors";
 import { env } from "@/lib/env";
 import { getServices, type Services } from "@/services/providers";
@@ -43,7 +44,9 @@ function populationLookup(): WikidataPopulation {
 export async function planOvernightStops(tripId: string, ownerId: string, services: Services = getServices(), minPopulation = DEFAULT_MIN_POPULATION): Promise<OvernightPlan> {
   const view = await getTripView(tripId, ownerId, services);
   const limitSeconds = view.preferences.maxDailyDriveMinutes * 60;
-  const days = drivingDaysNeeded(view.itinerary.totals.driveDurationSeconds, limitSeconds);
+  // Day trips are not part of the route, so their driving does not add driving days.
+  const routeSeconds = view.legs.reduce((sum, leg) => sum + leg.durationSeconds, 0);
+  const days = drivingDaysNeeded(routeSeconds, limitSeconds);
   const base = { days, minPopulation };
   if (days <= 1 || view.routeGeometry.length < 2) return { ...base, needed: false, suggestions: [], note: "This trip fits in one driving day, so no overnight stop is needed." };
   if (!services.places.searchSettlements) return { ...base, needed: true, suggestions: [], note: "Overnight suggestions are not available with the current places provider." };
@@ -82,10 +85,11 @@ export async function planOvernightStops(tripId: string, ownerId: string, servic
     settlements.push({ id: item.place.externalId, name: item.place.name, latitude: item.place.latitude, longitude: item.place.longitude, fraction: item.fraction, detourMeters: item.detourMeters, population: inhabitants });
   }
 
+  // Every planned night at an overnight stop covers one split point, so a four-night stay covers four.
   const overnightFractions = view.stops
     .filter((stop) => stop.overnight)
-    .map((stop) => projectFraction([stop.longitude, stop.latitude], view.routeGeometry, cumulative));
-  const chosen = chooseOvernightStops(view.itinerary.totals.driveDurationSeconds, limitSeconds, settlements, minPopulation, overnightFractions);
+    .flatMap((stop) => Array.from({ length: nightsAt(stop) }, () => projectFraction([stop.longitude, stop.latitude], view.routeGeometry, cumulative)));
+  const chosen = chooseOvernightStops(routeSeconds, limitSeconds, settlements, minPopulation, overnightFractions);
   const suggestions = chosen.map((item) => ({
     afterDay: item.afterDay,
     settlement: {

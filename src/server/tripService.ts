@@ -41,6 +41,8 @@ export type TripView = {
   legs: RouteLegView[];
   routeErrors: string[];
   routeGeometry: LngLat[];
+  /** Round-trip routes of the day trips, drawn separately from the route. */
+  dayTripRoutes: { id: string; name: string; geometry: LngLat[] }[];
   places: PlaceView[];
   itinerary: ItineraryResult;
   modes: Services["modes"];
@@ -125,35 +127,43 @@ export async function getRouteLeg(from: LngLat, to: LngLat, preferences: TripPre
 /** Round trip from each day trip's stop to its place and back. A failing trip is reported, never replaced with an estimate. */
 export async function computeDayTrips(stops: Stop[], preferences: TripPreferences, services = getServices()) {
   const errors: string[] = [];
-  const legs: DayTripLeg[] = [];
-  for (const stop of stops) {
-    for (const trip of stop.dayTrips) {
-      const here: LngLat = [stop.longitude, stop.latitude];
-      const there: LngLat = [trip.longitude, trip.latitude];
-      try {
-        const out = await getRouteLeg(here, there, preferences, services);
-        const back = await getRouteLeg(there, here, preferences, services);
-        legs.push({ id: trip.id, stopId: stop.id, dayIndex: trip.dayIndex, name: trip.name, distanceMeters: out.distanceMeters + back.distanceMeters, durationSeconds: out.durationSeconds + back.durationSeconds, status: "ok" });
-      } catch {
-        errors.push(`Day trip to ${trip.name} from ${stop.name}: the route could not be calculated.`);
-        legs.push({ id: trip.id, stopId: stop.id, dayIndex: trip.dayIndex, name: trip.name, distanceMeters: 0, durationSeconds: 0, status: "missing" });
-      }
+  const jobs = stops.flatMap((stop) => stop.dayTrips.map((trip) => ({ stop, trip })));
+  const legs = await mapInBatches(jobs, async ({ stop, trip }): Promise<DayTripLeg> => {
+    const here: LngLat = [stop.longitude, stop.latitude];
+    const there: LngLat = [trip.longitude, trip.latitude];
+    const base = { id: trip.id, stopId: stop.id, dayIndex: trip.dayIndex, name: trip.name, notes: trip.notes };
+    try {
+      const [out, back] = await Promise.all([getRouteLeg(here, there, preferences, services), getRouteLeg(there, here, preferences, services)]);
+      return { ...base, distanceMeters: out.distanceMeters + back.distanceMeters, durationSeconds: out.durationSeconds + back.durationSeconds, status: "ok", geometry: [...out.geometry, ...back.geometry] };
+    } catch {
+      errors.push(`Day trip to ${trip.name} from ${stop.name}: the route could not be calculated.`);
+      return { ...base, distanceMeters: 0, durationSeconds: 0, status: "missing", geometry: [] };
     }
-  }
+  });
   return { legs, errors };
+}
+
+/** Route requests in flight at once. Enough to speed up a cold trip without tripping the routing provider's per-minute limit. */
+const ROUTE_CONCURRENCY = 4;
+
+/** Runs tasks a few at a time. Results keep the order of the input. */
+async function mapInBatches<T, R>(items: T[], task: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += ROUTE_CONCURRENCY) {
+    results.push(...(await Promise.all(items.slice(i, i + ROUTE_CONCURRENCY).map(task))));
+  }
+  return results;
 }
 
 /** Computes every consecutive leg. A failing leg is reported, never silently replaced with an estimate. */
 export async function computeLegs(stops: Stop[], preferences: TripPreferences, services = getServices()) {
   const ordered = sortStops(stops);
   const errors: string[] = [];
-  const legs: RouteLegView[] = [];
-  for (let i = 0; i < ordered.length - 1; i++) {
-    const from = ordered[i];
-    const to = ordered[i + 1];
+  const pairs = ordered.slice(0, -1).map((from, i) => ({ from, to: ordered[i + 1] }));
+  const legs = await mapInBatches(pairs, async ({ from, to }): Promise<RouteLegView> => {
     try {
       const leg = await getRouteLeg([from.longitude, from.latitude], [to.longitude, to.latitude], preferences, services);
-      legs.push({ fromStopId: from.id, toStopId: to.id, distanceMeters: leg.distanceMeters, durationSeconds: leg.durationSeconds, provider: leg.provider, status: "ok", geometry: leg.geometry });
+      return { fromStopId: from.id, toStopId: to.id, distanceMeters: leg.distanceMeters, durationSeconds: leg.durationSeconds, provider: leg.provider, status: "ok", geometry: leg.geometry };
     } catch (error) {
       const message =
         error instanceof ProviderError && error.kind === "not_found"
@@ -162,9 +172,9 @@ export async function computeLegs(stops: Stop[], preferences: TripPreferences, s
             ? error.message
             : "The route for this leg could not be calculated.";
       errors.push(`${from.name} to ${to.name}: ${message}`);
-      legs.push({ fromStopId: from.id, toStopId: to.id, distanceMeters: 0, durationSeconds: 0, provider: "none", status: "missing", geometry: [] });
+      return { fromStopId: from.id, toStopId: to.id, distanceMeters: 0, durationSeconds: 0, provider: "none", status: "missing", geometry: [] };
     }
-  }
+  });
   return { legs, errors };
 }
 
@@ -254,6 +264,7 @@ export async function getTripView(tripId: string, ownerId: string, services = ge
     legs,
     routeErrors: [...errors, ...dayTrips.errors],
     routeGeometry,
+    dayTripRoutes: dayTrips.legs.filter((leg) => leg.geometry.length > 1).map((leg) => ({ id: leg.id, name: leg.name, geometry: leg.geometry })),
     places: placeRows.map(toPlaceView),
     itinerary,
     modes: services.modes,

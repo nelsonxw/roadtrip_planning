@@ -204,6 +204,26 @@ describe("hotels at overnight stops", () => {
   });
 });
 
+describe("packed day warning", () => {
+  const dayWith = (driveSeconds: number, visitMinutes: number) =>
+    buildItinerary({
+      stops: [stop("o", "origin", 0, 0, 0), stop("d", "destination", 0, 3, 1, { visitMinutes })],
+      legs: [{ distanceMeters: 0, durationSeconds: driveSeconds, provider: "test", status: "ok" }],
+      preferences: { maxDailyDriveMinutes: 1000 },
+      durationDays: null,
+      startDate: null,
+    }).days[0];
+
+  it("is not raised for a day with a few hours of driving", () => {
+    expect(dayWith(3.5 * 3600, 0).warnings.join(" ")).not.toMatch(/packed/);
+  });
+
+  it("is raised once driving plus visits pass 12 hours", () => {
+    expect(dayWith(10 * 3600, 150).warnings.join(" ")).toMatch(/packed/);
+    expect(dayWith(11 * 3600, 30).warnings.join(" ")).not.toMatch(/packed/);
+  });
+});
+
 describe("day trips", () => {
   const legs = (...durations: number[]): LegMetrics[] =>
     durations.map((seconds) => ({ distanceMeters: seconds * 20, durationSeconds: seconds, provider: "test", status: "ok" }));
@@ -212,7 +232,7 @@ describe("day trips", () => {
     stop("a", "optional", 0, 1, 1, { overnight: true, hotels: [{ id: "h1", name: "Inn", address: "", nights }] }),
     stop("d", "destination", 0, 3, 2),
   ];
-  const dayTrip = (stopId: string, dayIndex: number, name: string): DayTripLeg => ({ id: name, stopId, dayIndex, name, distanceMeters: 40000, durationSeconds: 3600, status: "ok" });
+  const dayTrip = (stopId: string, dayIndex: number, name: string): DayTripLeg => ({ id: name, stopId, dayIndex, name, notes: "", distanceMeters: 40000, durationSeconds: 3600, status: "ok", geometry: [] });
   const plan = (nights: number, dayTrips: DayTripLeg[]) =>
     buildItinerary({ stops: stopsWithNights(nights), legs: legs(3600, 3600), preferences: { maxDailyDriveMinutes: 360 }, durationDays: null, startDate: null, dayTrips });
 
@@ -220,7 +240,8 @@ describe("day trips", () => {
   it("applies a day trip to the one day it was planned for", () => {
     const result = plan(3, [dayTrip("a", 1, "Wolf Creek")]);
     expect(result.days.map((d) => d.kind)).toEqual(["driving", "rest", "rest", "driving"]);
-    expect(result.days[1].dayTrip).toEqual({ id: "Wolf Creek", name: "Wolf Creek", distanceMeters: 40000, durationSeconds: 3600, status: "ok" });
+    expect(result.days[1].dayTrip).toEqual({ id: "Wolf Creek", name: "Wolf Creek", notes: "", distanceMeters: 40000, durationSeconds: 3600, status: "ok" });
+    expect(result.days[1].dayTrip).not.toHaveProperty("geometry");
     expect(result.days[1].driveDurationSeconds).toBe(3600);
     expect(result.days[2].dayTrip).toBeNull();
     expect(result.days[3].dayTrip).toBeNull();
@@ -237,11 +258,19 @@ describe("day trips", () => {
     expect(plan(3, [dayTrip("a", 9, "Wolf Creek")]).warnings.join(" ")).toMatch(/day trip to Wolf Creek no longer matches a day/);
   });
 
-  it("adds one day trip per day and removes it again", () => {
+  it("updates the notes of a saved day trip without changing its place or day", () => {
     const base = { preferences: DEFAULT_PREFERENCES };
     const added = applyOperations({ ...base, stops: stopsWithNights(3) }, [{ type: "add_day_trip", stopId: "a", dayIndex: 1, name: "Wolf Creek", address: "", latitude: 37.2, longitude: -107.0 }]);
     const tripId = added.stops.find((item) => item.id === "a")!.dayTrips[0].id;
-    expect(added.stops.find((item) => item.id === "a")!.dayTrips).toEqual([expect.objectContaining({ name: "Wolf Creek", dayIndex: 1, latitude: 37.2, longitude: -107.0 })]);
+    const edited = applyOperations({ ...base, stops: added.stops }, [{ type: "update_day_trip", stopId: "a", dayTripId: tripId, notes: "Leave early" }]);
+    expect(edited.stops.find((item) => item.id === "a")!.dayTrips[0]).toMatchObject({ id: tripId, name: "Wolf Creek", dayIndex: 1, notes: "Leave early" });
+  });
+
+  it("adds one day trip per day and removes it again", () => {
+    const base = { preferences: DEFAULT_PREFERENCES };
+    const added = applyOperations({ ...base, stops: stopsWithNights(3) }, [{ type: "add_day_trip", stopId: "a", dayIndex: 1, name: "Wolf Creek", address: "", latitude: 37.2, longitude: -107.0, notes: "Bring water" }]);
+    const tripId = added.stops.find((item) => item.id === "a")!.dayTrips[0].id;
+    expect(added.stops.find((item) => item.id === "a")!.dayTrips).toEqual([expect.objectContaining({ name: "Wolf Creek", dayIndex: 1, latitude: 37.2, longitude: -107.0, notes: "Bring water" })]);
 
     expect(() =>
       applyOperations({ ...base, stops: added.stops }, [{ type: "add_day_trip", stopId: "a", dayIndex: 1, name: "Pagosa Peak", address: "", latitude: 37.3, longitude: -107.1 }]),

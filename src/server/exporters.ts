@@ -7,7 +7,10 @@ import type { TripView } from "./tripService";
 
 const TYPE_LABEL: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional", return: "Return to start" };
 const METERS_PER_MILE = 1609.344;
-const CSV_COLUMNS = ["day", "date", "leg", "start_location", "end_location", "drive_miles", "drive_time", "overnight", "notes", "generated_at"];
+const CSV_COLUMNS = [
+  "day", "date", "leg", "start_location", "end_location", "drive_miles", "drive_time", "overnight",
+  "hotels", "hotel_address", "day_trip_address", "notes", "generated_at",
+];
 
 /**
  * Spreadsheet apps run text starting with = + - @ as a formula. Stop names and notes come from users,
@@ -36,11 +39,12 @@ export function buildItineraryCsv(view: TripView, generatedAt: Date): string {
     }
   }
 
-  const rows = view.legs.map((leg, index) => {
+  const legRows = view.legs.map((leg, index) => {
     const start = stopsById.get(leg.fromStopId)!;
     const end = stopsById.get(leg.toStopId)!;
     const info = legInfoByEndStop.get(end.id);
     const routed = leg.status === "ok";
+    const overnight = Boolean(info?.overnight);
     return {
       day: info?.day ?? "",
       date: info?.date ?? "",
@@ -49,11 +53,41 @@ export function buildItineraryCsv(view: TripView, generatedAt: Date): string {
       end_location: end.name,
       drive_miles: routed ? (leg.distanceMeters / METERS_PER_MILE).toFixed(1) : "",
       drive_time: routed ? formatDuration(leg.durationSeconds) : "",
-      overnight: info?.overnight ? "yes" : "no",
+      overnight: overnight ? "yes" : "no",
+      hotels: overnight ? end.hotels.map((hotel) => hotel.name).join("; ") : "",
+      hotel_address: overnight ? end.hotels.map((hotel) => hotel.address).filter(Boolean).join("; ") : "",
+      day_trip_address: "",
       notes: end.notes,
       generated_at: generatedAt.toISOString(),
     };
   });
+
+  // A day trip is its own row on the day it belongs to, from the place the day starts at.
+  const dayTripRows = view.itinerary.days.flatMap((day) => {
+    if (!day.dayTrip || !day.startStopId) return [];
+    const start = stopsById.get(day.startStopId)!;
+    const trip = start.dayTrips.find((item) => item.id === day.dayTrip!.id);
+    const routed = day.dayTrip.status === "ok";
+    return [
+      {
+        day: day.dayNumber,
+        date: day.date ?? "",
+        leg: "Day trip",
+        start_location: start.name,
+        end_location: day.dayTrip.name,
+        drive_miles: routed ? (day.dayTrip.distanceMeters / METERS_PER_MILE).toFixed(1) : "",
+        drive_time: routed ? formatDuration(day.dayTrip.durationSeconds) : "",
+        overnight: "no",
+        hotels: "",
+        hotel_address: "",
+        day_trip_address: trip?.address ?? "",
+        notes: day.dayTrip.notes,
+        generated_at: generatedAt.toISOString(),
+      },
+    ];
+  });
+
+  const rows = [...legRows, ...dayTripRows].sort((a, b) => Number(a.day || 0) - Number(b.day || 0));
   return stringify(rows.map(neutralizeFormulas), { header: true, columns: CSV_COLUMNS });
 }
 
