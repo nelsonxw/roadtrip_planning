@@ -39,7 +39,6 @@ model Trip {
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
   stops        Stop[]
-  places       PlaceRecommendation[]
   messages     ChatMessage[]
   proposals    TripProposal[]
   revisions    TripRevision[]
@@ -63,38 +62,9 @@ model Stop {
   overnight    Boolean  @default(false)
   hotels       Json     @default("[]")
   dayTrips     Json     @default("[]")
-  place        PlaceRecommendation?
   createdAt    DateTime @default(now())
 
   @@index([tripId, sequence])
-}
-
-model PlaceRecommendation {
-  id                   String   @id @default(cuid())
-  tripId               String
-  trip                 Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
-  externalId           String
-  name                 String
-  category             String
-  description          String   @default("")
-  address              String   @default("")
-  latitude             Float
-  longitude            Float
-  source               String
-  sourceUrl            String?
-  imageUrl             String?
-  imageSourceUrl       String?
-  imageAttribution     String?
-  imageLicense         String?
-  reason               String   @default("")
-  visitMinutes         Int?
-  detourDistanceMeters Int?
-  status               String   @default("suggested")
-  stopId               String?  @unique
-  stop                 Stop?    @relation(fields: [stopId], references: [id], onDelete: SetNull)
-  createdAt            DateTime @default(now())
-
-  @@unique([tripId, externalId])
 }
 
 model RouteCache {

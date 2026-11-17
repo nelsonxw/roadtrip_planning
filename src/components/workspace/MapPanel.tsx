@@ -8,6 +8,7 @@ import type { TripView } from "@/server/tripService";
 import type { Stop } from "@/domain/trip";
 import type { HotelCandidate } from "@/services/types";
 import type { PendingHotel } from "./hotelSearch";
+import type { PopularPlace } from "@/server/popularPlaces";
 
 const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE_URL || "https://tiles.openfreemap.org/styles/liberty";
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -28,16 +29,49 @@ type Props = {
   /** Dashed preview of the route through the suggested overnight towns. Not saved until a suggestion is accepted. */
   previewGeometry: [number, number][];
   selectedStopId: string | null;
-  selectedPlaceId: string | null;
   onSelectStop: (id: string) => void;
-  onSelectPlace: (id: string) => void;
   /** Hotels from the latest search near an overnight stop. Shown until the search is cleared. */
   hotelMatches: HotelCandidate[];
   pickedHotelId: string | null;
   onPickHotel: (id: string) => void;
   /** A located address that is not saved yet. Shown as a dot so the user can check it before adding the hotel. */
   pendingHotel: PendingHotel | null;
+  /** AI-suggested popular places, verified on Wikidata. Shown as diamonds with a Wikipedia summary on click. */
+  popularPlaces: PopularPlace[];
 };
+
+/** Popup content for a popular place: name, the brief Wikipedia summary, and a link to the full article. Text is set with textContent, never as HTML. */
+function popularPopupContent(place: PopularPlace): HTMLElement {
+  const content = document.createElement("div");
+  content.className = "max-w-xs space-y-1 text-sm";
+  const title = document.createElement("strong");
+  title.textContent = place.name;
+  content.appendChild(title);
+  if (place.type) {
+    const type = document.createElement("div");
+    type.className = "text-xs text-slate-500";
+    type.textContent = place.type;
+    content.appendChild(type);
+  }
+  const body = document.createElement("p");
+  body.className = "text-xs text-slate-700";
+  body.textContent = place.extract || place.reason;
+  content.appendChild(body);
+  const link = document.createElement("a");
+  link.href = place.wikipediaUrl ?? place.wikidataUrl;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.className = "text-xs font-medium text-sky-700 underline";
+  link.textContent = place.wikipediaUrl ? "Read the full article on Wikipedia" : "View on Wikidata";
+  content.appendChild(link);
+  if (place.wikipediaUrl) {
+    const credit = document.createElement("div");
+    credit.className = "text-[10px] text-slate-500";
+    credit.textContent = "Text from Wikipedia, CC BY-SA. Checked on Wikidata.";
+    content.appendChild(credit);
+  }
+  return content;
+}
 
 function supportsWebGL(): boolean {
   try {
@@ -59,7 +93,8 @@ function flyToPoint(map: MapLibreMap, longitude: number, latitude: number) {
   map.flyTo({ center: [longitude, latitude], zoom: Math.max(map.getZoom(), 14), duration: 800 });
 }
 
-export function MapPanel({ trip, overnightSuggestions, previewGeometry, selectedStopId, selectedPlaceId, onSelectStop, onSelectPlace, hotelMatches, pickedHotelId, onPickHotel, pendingHotel }: Props) {
+export function MapPanel({ trip, overnightSuggestions, previewGeometry, selectedStopId, onSelectStop, hotelMatches, pickedHotelId, onPickHotel, pendingHotel, popularPlaces }: Props) {
+  const popularMarkersRef = useRef(new Map<string, Marker>());
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef(new Map<string, { marker: Marker; el: HTMLButtonElement }>());
@@ -68,10 +103,10 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
   // Without WebGL the map cannot render. Stops, itinerary and chat still work, so the page shows a message instead of failing.
   const [webgl] = useState(supportsWebGL);
   const fitKey = useRef<string>("");
-  const callbacks = useRef({ onSelectStop, onSelectPlace, onPickHotel });
+  const callbacks = useRef({ onSelectStop, onPickHotel });
   useEffect(() => {
-    callbacks.current = { onSelectStop, onSelectPlace, onPickHotel };
-  }, [onSelectStop, onSelectPlace, onPickHotel]);
+    callbacks.current = { onSelectStop, onPickHotel };
+  }, [onSelectStop, onPickHotel]);
 
   useEffect(() => {
     if (!containerRef.current || !webgl) return;
@@ -82,7 +117,6 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
 
     map.on("load", () => {
       map.addSource("route", { type: "geojson", data: EMPTY });
-      map.addSource("places", { type: "geojson", data: EMPTY, cluster: true, clusterRadius: 40, clusterMaxZoom: 11 });
       map.addSource("overnight", { type: "geojson", data: EMPTY });
       map.addSource("preview", { type: "geojson", data: EMPTY });
       map.addSource("hotels", { type: "geojson", data: EMPTY });
@@ -113,34 +147,6 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
       map.addSource("route-return", { type: "geojson", data: EMPTY });
       map.addLayer({ id: "route-line", type: "line", source: "route", paint: { "line-color": "#0284c7", "line-width": 4, "line-opacity": 0.85 } });
       map.addLayer({ id: "route-return-line", type: "line", source: "route-return", paint: { "line-color": "#0d9488", "line-width": 4, "line-opacity": 0.85 } });
-      map.addLayer({
-        id: "place-clusters",
-        type: "circle",
-        source: "places",
-        filter: ["has", "point_count"],
-        paint: { "circle-color": "#6d28d9", "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 30, 22], "circle-stroke-width": 2, "circle-stroke-color": "#ffffff" },
-      });
-      map.addLayer({ id: "place-cluster-count", type: "symbol", source: "places", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#ffffff" } });
-      map.addLayer({
-        id: "place-points",
-        type: "circle",
-        source: "places",
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-color": ["match", ["get", "status"], "saved", "#059669", "#facc15"],
-          "circle-radius": ["case", ["==", ["get", "sel"], 1], 16, 10],
-          "circle-stroke-width": ["case", ["==", ["get", "sel"], 1], 4, 2],
-          "circle-stroke-color": ["case", ["==", ["get", "sel"], 1], "#ea580c", "#1f2937"],
-        },
-      });
-      map.addLayer({
-        id: "place-numbers",
-        type: "symbol",
-        source: "places",
-        filter: ["!", ["has", "point_count"]],
-        layout: { "text-field": ["to-string", ["get", "n"]], "text-size": 11, "text-allow-overlap": true, "text-ignore-placement": true },
-        paint: { "text-color": "#1f2937" },
-      });
       map.addLayer({
         id: "hotel-points",
         type: "circle",
@@ -225,17 +231,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
         openHotelPopup(feature.geometry.coordinates as [number, number], feature.properties?.name, feature.properties?.address);
         if (typeof feature.properties?.id === "string") callbacks.current.onPickHotel(feature.properties.id);
       });
-      map.on("click", "place-points", (event) => {
-        const id = event.features?.[0]?.properties?.id;
-        if (typeof id === "string") callbacks.current.onSelectPlace(id);
-      });
-      map.on("click", "place-clusters", (event) => {
-        const feature = event.features?.[0];
-        const source = map.getSource("places") as GeoJSONSource;
-        if (!feature || feature.geometry.type !== "Point" || feature.properties?.cluster_id === undefined) return;
-        source.getClusterExpansionZoom(feature.properties.cluster_id).then((zoom) => map.easeTo({ center: feature.geometry.type === "Point" ? (feature.geometry.coordinates as [number, number]) : map.getCenter(), zoom }));
-      });
-      for (const layer of ["place-clusters", "place-points", "hotel-points", "saved-hotel-points", "day-trip-points"]) {
+      for (const layer of ["hotel-points", "saved-hotel-points", "day-trip-points"]) {
         map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
         map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
       }
@@ -343,16 +339,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
         geometry: { type: "Point", coordinates: [item.settlement.longitude, item.settlement.latitude] },
       })),
     });
-    const visiblePlaces = trip.places.filter((place) => place.status !== "dismissed");
-    (map.getSource("places") as GeoJSONSource | undefined)?.setData({
-      type: "FeatureCollection",
-      features: visiblePlaces.map((place, index) => ({
-        type: "Feature",
-        properties: { id: place.id, status: place.status, name: place.name, n: index + 1, sel: place.id === selectedPlaceId ? 1 : 0 },
-        geometry: { type: "Point", coordinates: [place.longitude, place.latitude] },
-      })),
-    });
-  }, [trip.legs, trip.stops, trip.places, selectedPlaceId, overnightSuggestions, previewGeometry, mapReady]);
+  }, [trip.legs, trip.stops, overnightSuggestions, previewGeometry, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -417,6 +404,35 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
     });
   }, [trip.stops, mapReady]);
 
+  // AI-suggested popular places: a numbered violet diamond each, numbered in the same order as the Places list.
+  // The popup gives the Wikipedia summary and a link to the full article.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const markers = popularMarkersRef.current;
+    markers.forEach((marker) => marker.remove());
+    markers.clear();
+    popularPlaces.forEach((place, index) => {
+      const wrapper = document.createElement("div");
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "flex h-5 w-5 rotate-45 items-center justify-center rounded-sm border-2 border-white bg-violet-600 text-[10px] font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-violet-300";
+      el.setAttribute("aria-label", `Popular place ${index + 1}: ${place.name}`);
+      el.title = place.name;
+      const label = document.createElement("span");
+      label.className = "rotate-[-45deg]";
+      label.textContent = String(index + 1);
+      el.appendChild(label);
+      el.addEventListener("click", () => {
+        popupRef.current?.remove();
+        popupRef.current = new maplibre.Popup({ offset: 12 }).setLngLat([place.longitude, place.latitude]).setDOMContent(popularPopupContent(place)).addTo(map);
+      });
+      wrapper.appendChild(el);
+      const marker = new maplibre.Marker({ element: wrapper, anchor: "center" }).setLngLat([place.longitude, place.latitude]).addTo(map);
+      markers.set(place.wikidataUrl, marker);
+    });
+  }, [popularPlaces, mapReady]);
+
   // The located-but-unsaved hotel from the add form. Zooms to it each time it is located.
   useEffect(() => {
     const map = mapRef.current;
@@ -453,22 +469,16 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
     map.fitBounds(bounds, { padding: 60, maxZoom: 9, duration: 500 });
   }, [trip.stops, trip.routeGeometry, mapReady]);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady || !selectedPlaceId) return;
-    const place = trip.places.find((item) => item.id === selectedPlaceId);
-    if (place) map.easeTo({ center: [place.longitude, place.latitude], zoom: Math.max(map.getZoom(), 13), duration: 600 });
-  }, [selectedPlaceId, trip.places, mapReady]);
-
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" role="region" aria-label="Trip map" />
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-white/95 p-2 text-[11px] text-slate-700 shadow">
         <p className="font-semibold">Legend</p>
         <p>■ Start · ◆ Destination · ● Required · ○ Optional</p>
-        <p>● Suggested place · ● Saved place · ● Overnight suggestion</p>
+        <p>● Overnight suggestion</p>
         <p>Route: <span className="text-sky-600">blue = outbound</span> · <span className="text-teal-600">teal = return</span></p>
         <p>Day trip: <span className="text-cyan-600">cyan = destination</span> · <span className="text-fuchsia-700">dashed purple = route</span></p>
+        <p><span className="text-violet-600">◆ Popular place (AI, checked on Wikidata)</span></p>
       </div>
       {trip.modes.routing === "demo" && (
         <div className="absolute left-3 top-3 rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900 shadow">DEMO ROUTING: distances and times are estimates, not live road data</div>

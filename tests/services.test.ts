@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildOverpassQuery, categorize, OverpassPlacesService, parseWikipediaTag } from "@/services/places/overpass";
 import { OpenRouteServiceRouting } from "@/services/routing/openrouteservice";
 import { OpenRouteServiceGeocoding } from "@/services/geocoding/openrouteservice";
 import { DemoRouting, DemoGeocoding } from "@/services/demo/demoServices";
 import { ProviderError } from "@/lib/errors";
-import type { ImageService } from "@/services/types";
 
 const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -86,42 +84,3 @@ describe("demo providers", () => {
   });
 });
 
-describe("Overpass places adapter", () => {
-  it("categorises OSM tags and rejects unrelated tags", () => {
-    expect(categorize({ tourism: "museum" })?.category).toBe("Museum & art");
-    expect(categorize({ leisure: "park" })?.category).toBe("Park & nature");
-    expect(categorize({ shop: "bakery" })).toBeNull();
-  });
-
-  it("builds a union query over every sampled point", () => {
-    const query = buildOverpassQuery([[-97.7, 30.2], [-104.9, 39.7]], 15000);
-    expect(query).toContain("nwr(around:15000,30.2,-97.7)");
-    expect(query).toContain("nwr(around:15000,39.7,-104.9)");
-    expect(query).toMatch(/out center tags/);
-  });
-
-  it("parses Wikipedia language:title tags", () => {
-    expect(parseWikipediaTag("en:Carlsbad Caverns National Park")).toEqual({ language: "en", title: "Carlsbad Caverns National Park" });
-    expect(parseWikipediaTag("no-colon")).toBeNull();
-  });
-
-  it("returns only named places near the route, ranked by detour, with source links and no invented images", async () => {
-    const near = { type: "node", id: 1, lat: 35.0, lon: -106.0, tags: { name: "Near Museum", tourism: "museum", "addr:city": "Albuquerque" } };
-    const far = { type: "node", id: 2, lat: 40.0, lon: -90.0, tags: { name: "Far Park", leisure: "park" } };
-    const unnamed = { type: "node", id: 3, lat: 35.0, lon: -106.0, tags: { tourism: "museum" } };
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("overpass")) return jsonResponse({ elements: [near, far, unnamed] });
-      return jsonResponse({});
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const images: ImageService = { mode: "live", findImageForUpload: vi.fn(async () => null) };
-    const service = new OverpassPlacesService("https://overpass.example/api", images, "test-agent");
-    const route: [number, number][] = [[-106.0, 35.0], [-105.0, 36.0]];
-    const places = await service.searchAlongRoute(route, { radiusMeters: 15000, maxResults: 10 });
-    expect(places.map((p) => p.name)).toEqual(["Near Museum"]);
-    expect(places[0].sourceUrl).toBe("https://www.openstreetmap.org/node/1");
-    expect(places[0].image).toBeNull();
-    expect(places[0].visitMinutes).toBe(90);
-    vi.unstubAllGlobals();
-  });
-});

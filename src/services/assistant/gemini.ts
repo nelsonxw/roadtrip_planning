@@ -42,6 +42,27 @@ async function requestWithBusyRetry<T>(attempt: () => Promise<T>): Promise<T> {
  * Calls the Gemini generateContent endpoint. The key travels in a request header so it never
  * appears in URLs, logs or error messages.
  */
+/** One plain-text request whose answer is JSON. No tools, so the model only writes its answer. */
+export async function generateJsonText(apiKey: string, model: string, systemInstruction: string, userText: string): Promise<string> {
+  const data = await requestWithBusyRetry(() =>
+    fetchProviderJson<GenerateResponse>(`${BASE_URL}/${encodeURIComponent(model)}:generateContent`, {
+      provider: PROVIDER,
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        contents: [{ role: "user", parts: [{ text: userText }] }],
+        generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+      }),
+      timeoutMs: 60000,
+      retries: 0,
+    }),
+  );
+  const text = (data.candidates?.[0]?.content?.parts ?? []).map((part) => part.text ?? "").join("").trim();
+  if (!text) throw new ProviderError(PROVIDER, "invalid_response", "The assistant returned no suggestions. Try again.");
+  return text;
+}
+
 export function createGeminiGenerator(apiKey: string, model: string): GenerateFn {
   return async ({ systemInstruction, contents, tools }) => {
     const data = await requestWithBusyRetry(() =>

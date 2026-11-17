@@ -75,7 +75,6 @@ export const tripOperationSchema = z.discriminatedUnion("type", [
     notes,
     visitMinutes,
     overnight: z.boolean().default(false),
-    placeId: z.string().optional(),
     /** Index among the stops on the chosen leg. Omitted means append to that leg. */
     index: z.number().int().min(0).optional(),
   }),

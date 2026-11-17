@@ -30,8 +30,7 @@ async function newTrip(ownerId: string, extra: { durationDays?: number } = {}) {
 const demoServices = () => ({
   geocoding: new m.demo.DemoGeocoding(),
   routing: new m.demo.DemoRouting(),
-  places: new m.demo.DemoPlaces(),
-  images: new m.demo.DemoImages(),
+  places: new m.demo.NoPlacesService(),
   assistantConfig: null,
   modes: { geocoding: "demo" as const, routing: "demo" as const, places: "demo" as const, assistant: "demo" as const },
 });

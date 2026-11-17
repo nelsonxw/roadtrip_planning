@@ -3,7 +3,7 @@ import { planTripChange, planWithModel, toOperations } from "@/server/aiPlanner"
 import type { TripView } from "@/server/tripService";
 import { createGeminiGenerator, type GeminiContent, type GenerateFn } from "@/services/assistant/gemini";
 import type { Services } from "@/services/providers";
-import { DemoRouting, DemoPlaces, DemoImages } from "@/services/demo/demoServices";
+import { DemoRouting, NoPlacesService } from "@/services/demo/demoServices";
 
 const santaFe = { label: "Santa Fe, NM, USA", name: "Santa Fe", latitude: 35.687, longitude: -105.9378, confidence: 0.9 };
 
@@ -26,8 +26,7 @@ function services(search: (q: string) => Promise<unknown[]>): Services {
   return {
     geocoding: { provider: "test", mode: "live", search: search as never, resolve: search as never },
     routing: new DemoRouting(),
-    places: new DemoPlaces(),
-    images: new DemoImages(),
+    places: new NoPlacesService(),
     assistantConfig: { apiKey: "test-key", model: "gemini-3.8-flash" },
     modes: { geocoding: "live", routing: "demo", places: "live", assistant: "live" },
   } as Services;

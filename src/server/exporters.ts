@@ -141,16 +141,8 @@ export function buildItineraryPdf(view: TripView, generatedAt: Date): Promise<Bu
       doc.moveDown(0.5);
     }
 
-    const sources = view.places.filter((place) => place.status === "added" && place.sourceUrl);
-    if (sources.length) {
-      doc.font("Helvetica-Bold").fontSize(11).text("Links for added places");
-      doc.font("Helvetica").fontSize(9);
-      sources.forEach((place) => doc.fillColor("#0369a1").text(`${place.name}: ${place.sourceUrl}`, { link: place.sourceUrl ?? undefined, underline: true }));
-      doc.fillColor("#0f172a").moveDown(0.5);
-    }
-
     doc.font("Helvetica").fontSize(8).fillColor("#64748b").text(
-      `Place data: © OpenStreetMap contributors (ODbL).${view.places.some((p) => p.source.includes("Geoapify")) ? " Powered by Geoapify." : ""} Visit lengths and times are estimates. Opening hours are not verified. Routing estimates come from the configured routing provider.`,
+      "Visit lengths and times are estimates. Opening hours are not verified. Routing estimates come from the configured routing provider.",
     );
     doc.end();
   });

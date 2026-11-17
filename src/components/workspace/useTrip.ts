@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TripView } from "@/server/tripService";
 import type { ChatMessageView, ProposalView } from "@/server/proposals";
 import type { TripOperation } from "@/domain/trip";
-import { api, ApiError, patch, post } from "@/lib/clientApi";
+import { api, ApiError, post } from "@/lib/clientApi";
 
 export type SaveStatus = "loading" | "saved" | "saving" | "error";
 
@@ -108,23 +108,10 @@ export function useTrip(tripId: string) {
     [mutate, tripId],
   );
 
-  const runPlaceAction = useCallback(
-    (url: string, body: Record<string, unknown> = {}) => mutate((expectedVersion) => post<TripView>(url, { expectedVersion, ...body }).then((t) => ({ trip: t }))),
-    [mutate],
-  );
-
-  const discoverPlaces = useCallback(() => mutate(() => post<TripView>(`/api/trips/${tripId}/places/discover`, {}).then((t) => ({ trip: t }))), [mutate, tripId]);
-
   const commitImport = useCallback(
     (rows: ImportCommitRow[]) => mutate((expectedVersion) => post<TripView>(`/api/trips/${tripId}/import/commit`, { expectedVersion, rows }).then((t) => ({ trip: t }))),
     [mutate, tripId],
   );
 
-  const setPlaceStatus = useCallback(
-    (placeId: string, placeStatus: "suggested" | "saved" | "dismissed") =>
-      mutate(() => patch<TripView>(`/api/trips/${tripId}/places/${placeId}`, { status: placeStatus }).then((t) => ({ trip: t }))),
-    [mutate, tripId],
-  );
-
-  return { trip, messages, status, error, setError, reload, applyOperations, sendMessage, decideProposal, undo, updateDetails, runPlaceAction, discoverPlaces, setPlaceStatus, commitImport, tripId };
+  return { trip, messages, status, error, setError, reload, applyOperations, sendMessage, decideProposal, undo, updateDetails, commitImport, tripId };
 }

@@ -1,148 +1,50 @@
 "use client";
 
-import { useState } from "react";
-import type { TripView, PlaceView } from "@/server/tripService";
-import { formatDistance, formatDuration } from "@/lib/format";
+import type { PopularPlacesResult } from "@/server/popularPlaces";
+import type { TripView } from "@/server/tripService";
 
 type Props = {
   trip: TripView;
-  selectedPlaceId: string | null;
-  onSelectPlace: (id: string | null) => void;
-  discover: () => Promise<boolean>;
-  setStatus: (id: string, status: "suggested" | "saved" | "dismissed") => Promise<boolean>;
-  addToTrip: (place: PlaceView) => Promise<boolean>;
+  popular: PopularPlacesResult | null;
+  askingPopular: boolean;
+  popularError: string | null;
+  onAskPopular: () => void;
 };
 
-export function PlacesPanel({ trip, selectedPlaceId, onSelectPlace, discover, setStatus, addToTrip }: Props) {
-  const [discovering, setDiscovering] = useState(false);
-  const [category, setCategory] = useState("all");
-  const categories = Array.from(new Set(trip.places.map((p) => p.category))).sort();
-  // Numbers follow the full non-dismissed list, so a category filter never renumbers places the map shows.
-  const numbered = trip.places.filter((p) => p.status !== "dismissed");
-  const numberOf = new Map(numbered.map((p, index) => [p.id, index + 1]));
-  const visible = numbered.filter((p) => category === "all" || p.category === category);
-
-  async function runDiscovery() {
-    setDiscovering(true);
-    await discover();
-    setDiscovering(false);
-  }
-
+/** Numbers match the diamonds on the map, so a suggestion can be found from either place. */
+export function PlacesPanel({ trip, popular, askingPopular, popularError, onAskPopular }: Props) {
   return (
     <div className="flex h-full flex-col">
       <div className="space-y-2 border-b border-slate-200 p-4">
-        <button type="button" onClick={runDiscovery} disabled={discovering || trip.routeGeometry.length < 2} className="w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50">
-          {discovering ? "Searching along your route..." : trip.places.length ? "Refresh places along route" : "Find places along route"}
+        <button type="button" onClick={onAskPopular} disabled={askingPopular || trip.routeGeometry.length < 2} className="w-full rounded-lg border border-violet-300 px-3 py-2 text-sm font-medium text-violet-800 hover:bg-violet-50 disabled:opacity-50">
+          {askingPopular ? "Asking for popular places..." : "Suggest popular places (AI)"}
         </button>
-        <p className="text-xs text-slate-500">
-          Visit lengths are estimates. Photos appear only when a licensed image is available. Opening hours are not shown because they are not verified.
-        </p>
-        <p className="text-[11px] text-slate-500">
-          Place data © OpenStreetMap contributors.
-          {trip.places.some((p) => p.source.includes("Geoapify")) && (
-            <>
-              {" "}
-              <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer" className="underline">Powered by Geoapify</a>.
-            </>
-          )}
-        </p>
-        {trip.places.length > 0 && (
-          <label className="block text-xs font-medium text-slate-700">
-            Category
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm">
-              <option value="all">All categories</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          </label>
-        )}
+        <p className="text-xs text-slate-500">Within 50 miles of your route and stops. Each suggestion is checked on Wikidata before it is shown. Click a diamond on the map to read about it.</p>
+        {popularError && <p role="alert" className="text-xs text-rose-700">{popularError}</p>}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {trip.places.length === 0 ? (
-          <p className="text-sm text-slate-600">No places yet. Search along the route to see attractions, parks and viewpoints.</p>
-        ) : (
-          <ul className="mt-3 space-y-2" aria-label="Places along the route">
-            {visible.map((place) => (
-              <li key={place.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelectPlace(place.id)}
-                  aria-pressed={place.id === selectedPlaceId}
-                  className={`w-full rounded-lg border p-3 text-left hover:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-400 ${place.id === selectedPlaceId ? "border-violet-400 bg-violet-50" : "border-slate-200 bg-white"}`}
-                >
+        {popular ? (
+          <div className="space-y-2">
+            <p className="text-xs text-slate-600">{popular.note}</p>
+            <ol className="space-y-2" aria-label="Popular places">
+              {popular.places.map((place, index) => (
+                <li key={place.wikidataUrl} className="rounded-lg border border-violet-100 bg-white p-3 text-xs">
                   <span className="block font-medium text-slate-900">
-                    <span className="mr-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-800 bg-yellow-300 px-1 text-[11px] font-semibold text-slate-900">{numberOf.get(place.id)}</span>
-                    {place.name}
+                    <span className="mr-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-800 bg-violet-300 px-1 text-[11px] font-semibold text-slate-900">{index + 1}</span>
+                    <a href={place.wikipediaUrl ?? place.wikidataUrl} target="_blank" rel="noreferrer" className="underline">{place.name}</a>
                   </span>
-                  <span className="block text-xs text-slate-600">
-                    {place.category}
-                    {place.detourDistanceMeters !== null ? ` · ~${formatDistance(place.detourDistanceMeters)} from route (straight line)` : ""}
-                    {place.status === "added" ? " · in itinerary" : place.status === "saved" ? " · saved" : ""}
-                  </span>
-                </button>
-                {place.id === selectedPlaceId && (
-                  <div className="mt-2">
-                    <PlaceCard place={place} number={numberOf.get(place.id)} onClose={() => onSelectPlace(null)} onStatus={setStatus} onAdd={addToTrip} />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
+                  {place.type && <span className="block text-slate-500">{place.type}</span>}
+                  <span className="block text-slate-600">{place.extract || place.reason}</span>
+                  <span className="block text-slate-500">{place.distanceMiles} mi from route</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-600">Ask for popular places to see attractions and parks near your route.</p>
         )}
       </div>
     </div>
-  );
-}
-
-function PlaceCard({ place, number, onClose, onStatus, onAdd }: { place: PlaceView; number?: number; onClose: () => void; onStatus: Props["setStatus"]; onAdd: Props["addToTrip"] }) {
-  const inItinerary = place.status === "added";
-  return (
-    <article aria-label={`Details for ${place.name}`} className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      {place.image ? (
-        // Images are shown only with licence metadata. The attribution line is always displayed with them.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={place.image.url} alt={`Photo of ${place.name}`} loading="lazy" className="h-40 w-full object-cover" />
-      ) : (
-        <div role="img" aria-label="No verified photo available" className="flex h-24 items-center justify-center bg-slate-100 text-xs text-slate-500">
-          No verified photo available
-        </div>
-      )}
-      <div className="space-y-2 p-4 text-sm">
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="font-semibold text-slate-900">
-            {number !== undefined && (
-              <span className="mr-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-800 bg-yellow-300 px-1 text-[11px] font-semibold text-slate-900">{number}</span>
-            )}
-            {place.name}
-          </h3>
-          <button type="button" onClick={onClose} aria-label="Close details" className="text-slate-500 hover:text-slate-900">✕</button>
-        </div>
-        <p className="text-xs text-slate-600">{place.category}{place.address ? ` · ${place.address}` : ""}</p>
-        {place.description ? <p className="text-slate-700">{place.description}</p> : <p className="text-xs italic text-slate-500">No description from the source.</p>}
-        <dl className="grid grid-cols-2 gap-1 text-xs text-slate-700">
-          <dt className="text-slate-500">Detour (straight line)</dt>
-          <dd>{place.detourDistanceMeters !== null ? formatDistance(place.detourDistanceMeters) : "Unknown"}</dd>
-          <dt className="text-slate-500">Visit length</dt>
-          <dd>{place.visitMinutes ? `~${formatDuration(place.visitMinutes * 60)} (estimate)` : "Unknown"}</dd>
-          <dt className="text-slate-500">Opening hours</dt>
-          <dd>Not verified</dd>
-        </dl>
-        {place.image && <p className="text-[11px] text-slate-500">Photo: {place.image.attribution}, {place.image.license} · <a className="underline" href={place.image.sourceUrl ?? "#"} target="_blank" rel="noreferrer">source</a></p>}
-        <p className="text-[11px] text-slate-500">Source: {place.source}{place.sourceUrl ? <> · <a className="text-sky-700 underline" href={place.sourceUrl} target="_blank" rel="noreferrer">view page</a></> : null}</p>
-        <div className="flex flex-wrap gap-2 pt-1">
-          <button type="button" disabled={inItinerary} onClick={() => onAdd(place)} className="rounded-lg bg-sky-600 px-3 py-1.5 font-medium text-white disabled:opacity-50">
-            {inItinerary ? "In itinerary" : "Add to trip"}
-          </button>
-          <button type="button" disabled={inItinerary} onClick={() => onStatus(place.id, place.status === "saved" ? "suggested" : "saved")} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-50">
-            {place.status === "saved" ? "Unsave" : "Save for later"}
-          </button>
-          <button type="button" disabled={inItinerary} onClick={() => onStatus(place.id, "dismissed")} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-50">
-            Dismiss
-          </button>
-        </div>
-      </div>
-    </article>
   );
 }

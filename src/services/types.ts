@@ -40,29 +40,6 @@ export interface RoutingService {
   route(from: LngLat, to: LngLat, options: RoutingOptions): Promise<RouteLeg>;
 }
 
-export type PlaceCandidate = {
-  externalId: string;
-  name: string;
-  category: string;
-  latitude: number;
-  longitude: number;
-  address: string;
-  description: string;
-  sourceUrl: string | null;
-  image: ImageInfo | null;
-  /** Straight-line distance from the place to the nearest point on the route. Not a driving detour. */
-  detourDistanceMeters: number;
-  /** Rough visit length from the category. Always an estimate. */
-  visitMinutes: number | null;
-  source: string;
-};
-
-export type PlaceSearchOptions = {
-  radiusMeters: number;
-  maxResults: number;
-  categories?: string[];
-};
-
 export type SettlementCandidate = {
   externalId: string;
   name: string;
@@ -78,22 +55,8 @@ export type HotelCandidate = { externalId: string; name: string; address: string
 export interface PlacesService {
   readonly provider: string;
   readonly mode: ServiceMode;
-  searchAlongRoute(routeGeometry: LngLat[], options: PlaceSearchOptions): Promise<PlaceCandidate[]>;
   /** Cities, towns and villages near the route. Optional: not every provider can list settlements. */
   searchSettlements?(routeGeometry: LngLat[], radiusMeters: number): Promise<SettlementCandidate[]>;
   /** Hotels within a radius of a point, nearest first. Optional: only providers with accommodation data implement it. */
   searchHotels?(center: LngLat, radiusMeters: number): Promise<HotelCandidate[]>;
-}
-
-export type ImageInfo = {
-  url: string;
-  sourceUrl: string;
-  attribution: string;
-  license: string;
-};
-
-export interface ImageService {
-  readonly mode: ServiceMode;
-  /** Takes the upload URL of an image (for example from Wikipedia's summary) and returns it only when licence metadata is available. */
-  findImageForUpload(uploadUrl: string): Promise<ImageInfo | null>;
 }

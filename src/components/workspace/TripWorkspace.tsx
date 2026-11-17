@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import type { PlaceView } from "@/server/tripService";
 import type { HotelCandidate } from "@/services/types";
 import { api } from "@/lib/clientApi";
 import { useTrip } from "./useTrip";
@@ -10,6 +9,7 @@ import { ItineraryPanel } from "./ItineraryPanel";
 import { OvernightSuggestions, useOvernightPlan } from "./OvernightSuggestions";
 import { PlacesPanel } from "./PlacesPanel";
 import { ChatPanel } from "./ChatPanel";
+import type { PopularPlacesResult } from "@/server/popularPlaces";
 import { filterHotels, type HotelSearch, type PendingHotel } from "./hotelSearch";
 
 type MobileTab = "map" | "trip" | "chat";
@@ -56,12 +56,14 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   const [sidePanel, setSidePanel] = useState<SidePanel>("itinerary");
   const [chatOpen, setChatOpen] = useState(true);
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
-  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [leftWidth, setLeftWidth] = useState(380);
   const [rightWidth, setRightWidth] = useState(340);
   const [hotelSearch, setHotelSearch] = useState<HotelSearch | null>(null);
   const [pendingHotel, setPendingHotel] = useState<PendingHotel | null>(null);
   const [pick, setPick] = useState<{ seq: number; hotel: HotelCandidate } | null>(null);
+  const [popular, setPopular] = useState<PopularPlacesResult | null>(null);
+  const [askingPopular, setAskingPopular] = useState(false);
+  const [popularError, setPopularError] = useState<string | null>(null);
 
   if (trip.status === "loading" && !trip.trip) return <div className="p-6 text-sm text-slate-600">Loading trip…</div>;
   if (!trip.trip) {
@@ -81,7 +83,6 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
   };
   const selectStop = (id: string) => {
     setSelectedStopId(id);
-    setSelectedPlaceId(null);
     setHotelSearch(null);
     setPendingHotel(null);
     setPick(null);
@@ -103,11 +104,17 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
     setHotelSearch(null);
   };
   const filterHotelResults = (query: string) => setHotelSearch((prev) => (prev ? { ...prev, query } : prev));
-  const selectPlace = (id: string | null) => {
-    setSelectedPlaceId(id);
-    if (id) setSidePanel("places");
+  const askPopular = async () => {
+    setAskingPopular(true);
+    setPopularError(null);
+    try {
+      setPopular(await api<PopularPlacesResult>(`/api/trips/${tripId}/popular-places`));
+    } catch (err) {
+      setPopularError(err instanceof Error ? err.message : "Popular places are unavailable right now.");
+    } finally {
+      setAskingPopular(false);
+    }
   };
-  const addPlace = (place: PlaceView) => trip.runPlaceAction(`/api/trips/${tripId}/places/${place.id}/add`);
 
   const chatPx = chatOpen ? rightWidth : COLLAPSED_CHAT_PX;
 
@@ -208,11 +215,10 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
             ) : (
               <PlacesPanel
                 trip={current}
-                selectedPlaceId={selectedPlaceId}
-                onSelectPlace={selectPlace}
-                discover={() => trip.discoverPlaces()}
-                setStatus={(id, status) => trip.setPlaceStatus(id, status)}
-                addToTrip={addPlace}
+                popular={popular}
+                askingPopular={askingPopular}
+                popularError={popularError}
+                onAskPopular={askPopular}
               />
             )}
           </div>
@@ -236,16 +242,15 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
               overnightSuggestions={visibleOvernight}
               previewGeometry={previewKey ? previewGeometry : []}
               selectedStopId={selectedStopId}
-              selectedPlaceId={selectedPlaceId}
               onSelectStop={(id) => {
                 selectStop(id);
                 setSidePanel("itinerary");
               }}
-              onSelectPlace={selectPlace}
               hotelMatches={filterHotels(hotelSearch?.hotels ?? [], hotelSearch?.query ?? "")}
               pickedHotelId={hotelSearch?.pickedId ?? null}
               onPickHotel={pickHotel}
               pendingHotel={pendingHotel}
+              popularPlaces={popular?.places ?? []}
             />
           </div>
         </main>

@@ -1,14 +1,5 @@
 import { haversineMeters, type LngLat } from "@/domain/geo";
-import type {
-  GeocodeCandidate,
-  GeocodingService,
-  ImageService,
-  PlaceCandidate,
-  PlaceSearchOptions,
-  PlacesService,
-  RouteLeg,
-  RoutingService,
-} from "../types";
+import type { GeocodeCandidate, GeocodingService, PlacesService, RouteLeg, RoutingService } from "../types";
 
 /*
  * Demo providers are used only when API keys are missing or in automated tests.
@@ -75,37 +66,8 @@ export class DemoRouting implements RoutingService {
   }
 }
 
-export class DemoPlaces implements PlacesService {
-  readonly provider = "Demo placeholder places";
+/** Used when no Geoapify key is set. Towns and hotels are then unavailable, and the features that need them say so. */
+export class NoPlacesService implements PlacesService {
+  readonly provider = "None (set GEOAPIFY_API_KEY)";
   readonly mode = "demo" as const;
-
-  async searchAlongRoute(routeGeometry: LngLat[], options: PlaceSearchOptions): Promise<PlaceCandidate[]> {
-    if (routeGeometry.length < 2) return [];
-    const count = Math.min(options.maxResults, 4);
-    return Array.from({ length: count }, (_, i): PlaceCandidate => {
-      const [longitude, latitude] = routeGeometry[Math.floor(((i + 1) / (count + 1)) * (routeGeometry.length - 1))];
-      return {
-        externalId: `demo/${i + 1}`,
-        name: `[DEMO] Sample viewpoint ${i + 1}`,
-        category: "Viewpoint",
-        latitude,
-        longitude,
-        address: "Demo location, not a real place",
-        description: "Demo placeholder. Configure OPENROUTESERVICE_API_KEY and the places provider to see real results.",
-        sourceUrl: null,
-        image: null,
-        detourDistanceMeters: 0,
-        visitMinutes: 20,
-        source: this.provider,
-      };
-    });
-  }
-}
-
-export class DemoImages implements ImageService {
-  readonly mode = "demo" as const;
-
-  async findImageForUpload(): Promise<null> {
-    return null;
-  }
 }
