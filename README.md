@@ -15,8 +15,7 @@ Requirements: Node.js 20+ (tested on 24) and npm.
 ```bash
 npm install
 cp .env.example .env.local          # Windows PowerShell: Copy-Item .env.example .env.local
-npm run db:dev                      # starts a local PostgreSQL on port 5433 (keep this running)
-npm run db:migrate                  # applies migrations to DATABASE_URL
+# set FIREBASE_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS in .env.local (see Environment variables)
 npm run dev                         # http://localhost:3000
 ```
 
@@ -30,7 +29,8 @@ All variables are read on the server. Only `NEXT_PUBLIC_MAP_STYLE_URL` is expose
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | PostgreSQL connection string. |
+| `FIREBASE_PROJECT_ID` | yes | Firebase project that holds the Firestore database. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | yes | Path to the Firebase service account key JSON. Keep the file outside the project folder. |
 | `OPENROUTESERVICE_API_KEY` | no | Enables live geocoding, autocomplete, and driving routes. Without it, demo providers are used. |
 | `GEOAPIFY_API_KEY` | no | Places along the route from Geoapify (free plan). Without it, the Overpass fallback is used. |
 | `OVERPASS_URL` | no | OpenStreetMap Overpass endpoint for the fallback. Defaults to the public instance. |
@@ -56,9 +56,8 @@ src/
   server/        Trip service (persistence, version checks, route sync), proposals, assistant, exporters, auth
   app/api/       Route handlers. Every handler requires a session and checks trip ownership.
   components/    React UI: map (MapLibre), itinerary, places, chat, trip creation
-prisma/          Schema and migrations
-tests/           Unit tests, service adapter tests, and database integration tests
-scripts/         Local database launcher and an end-to-end API smoke test
+tests/           Unit tests, service adapter tests, and Firestore integration tests
+scripts/         An end-to-end API smoke test
 ```
 
 Key decisions:
@@ -71,11 +70,12 @@ Key decisions:
 - **Undo.** Each change writes a revision snapshot. Undo restores the previous snapshot as a new revision.
 - **Itinerary is derived.** Day plans are computed from the ordered stops and cached legs on every read, so they cannot drift from the map.
 - **Sessions and passwords.** Passwords use scrypt. Session tokens are random and stored only as SHA-256 hashes.
+- **Storage.** Firestore holds users, sessions, trips (with stops, revisions, chat, and proposals as subcollections), and the route cache. Version checks and multi-step saves run in Firestore transactions.
 
 ## Tests
 
 ```bash
-npm test              # unit, adapter, import, and database integration tests (needs the local database running)
+npm test              # unit, adapter, import, and Firestore integration tests (uses the Firebase project in .env.local)
 npm run typecheck
 npx eslint src tests scripts e2e playwright.config.ts
 npm run test:e2e      # Playwright browser tests: builds the app, serves it on port 3100, runs headless Chromium
@@ -92,9 +92,9 @@ Last recorded run:
 
 ## Deployment
 
-1. Provision PostgreSQL 15+ (managed services such as Neon, Supabase, or RDS work).
-2. Set `DATABASE_URL` and the optional keys in the host's environment.
-3. `npm ci && npm run db:migrate && npm run build && npm start`. Any Node 20+ host works. A Docker image is not included yet.
+1. Create a Firestore database in the Firebase project (Native mode).
+2. Set `FIREBASE_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS` (or the host's own Google credentials), and the optional keys in the host's environment.
+3. `npm ci && npm run build && npm start`. Any Node 20+ host works. A Docker image is not included yet.
 4. Serve over HTTPS. Session cookies are `Secure` in production.
 
 ## Known limitations
@@ -110,7 +110,7 @@ Last recorded run:
 - **Place search is unverified against the live Geoapify API.** The adapter is unit-tested against mocked responses. Live verification needs a `GEOAPIFY_API_KEY`.
 - **Browser tests cover the main workflows in headless Chromium only.** Drag-and-drop is not offered (move buttons are used instead). Map rendering depends on WebGL and the style server; when WebGL is missing, the page shows a message and the itinerary still works. Tiles are not asserted in tests.
 - **Stop-list import:** the file's `sequence` column is ignored (file order is always kept). Address lookups are capped at 100 per import, and files are limited to 500 rows and 2 MB. In demo geocoding only a few sample cities resolve, so import with coordinates or a live key for real addresses.
-- **Local database:** on this machine, Docker and the PostgreSQL installer were unavailable, so development uses the `embedded-postgres` package (PostgreSQL 18). Production should use a managed PostgreSQL.
+- **Database:** data is stored in Cloud Firestore. Development and tests write to the configured Firebase project, so test data is cleaned up after each run.
 - Next.js Cache Components are disabled (`cacheComponents: false`) because every page depends on the session cookie.
 
 ## Requirements checklist

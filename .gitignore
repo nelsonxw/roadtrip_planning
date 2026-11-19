@@ -49,3 +49,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase service account keys: never commit
+roadtripplanning-*-firebase-adminsdk-*.json
+*-firebase-adminsdk-*.json

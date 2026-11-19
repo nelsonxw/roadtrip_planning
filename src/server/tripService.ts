@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Prisma, Stop as StopRow, Trip as TripRow } from "@prisma/client";
+import type { DocumentData } from "firebase-admin/firestore";
 import { buildItinerary, type DayTripLeg, type ItineraryResult, type LegMetrics } from "@/domain/itinerary";
 import { type LngLat } from "@/domain/geo";
 import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, renumber, sortStops, type DayTrip, type Hotel, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
-import { db } from "@/lib/db";
 import { AppError, ProviderError } from "@/lib/errors";
+import { getDb } from "@/lib/firestore";
 import { getServices, type Services } from "@/services/providers";
 import type { RouteLeg } from "@/services/types";
 
@@ -31,27 +31,87 @@ export type TripView = {
 
 type Endpoint = { name: string; address?: string; latitude: number; longitude: number };
 
+type TripRecord = {
+  id: string;
+  ownerId: string;
+  name: string;
+  notes: string;
+  startDate: Date | null;
+  durationDays: number | null;
+  preferences: unknown;
+  version: number;
+  updatedAt: Date;
+};
+
+const tripsRef = () => getDb().collection("trips");
+const tripRef = (tripId: string) => tripsRef().doc(tripId);
+const stopsRef = (tripId: string) => tripRef(tripId).collection("stops");
+const revisionsRef = (tripId: string) => tripRef(tripId).collection("revisions");
+const routeCacheRef = (key: string) => getDb().collection("routeCache").doc(key);
+
+/** Revision IDs are zero-padded so they sort in the order they were made. */
+const revisionId = (revisionNumber: number) => String(revisionNumber).padStart(6, "0");
+
 const toDateOnly = (value: Date | null) => (value ? value.toISOString().slice(0, 10) : null);
 
-function toStop(row: StopRow): Stop {
+const toDate = (value: unknown): Date | null => (value ? (value as { toDate(): Date }).toDate() : null);
+
+function toTripRecord(id: string, data: DocumentData): TripRecord {
   return {
-    id: row.id,
-    name: row.name,
-    address: row.address,
-    latitude: row.latitude,
-    longitude: row.longitude,
-    sequence: row.sequence,
-    stopType: row.stopType as Stop["stopType"],
-    source: row.source as Stop["source"],
-    notes: row.notes,
-    visitMinutes: row.visitMinutes,
-    overnight: row.overnight,
-    hotels: row.hotels as unknown as Hotel[],
-    dayTrips: row.dayTrips as unknown as DayTrip[],
+    id,
+    ownerId: data.ownerId,
+    name: data.name,
+    notes: data.notes,
+    startDate: toDate(data.startDate),
+    durationDays: data.durationDays ?? null,
+    preferences: data.preferences,
+    version: data.version,
+    updatedAt: toDate(data.updatedAt) ?? new Date(0),
   };
 }
 
-function toPreferences(value: Prisma.JsonValue): TripPreferences {
+function toStop(id: string, data: DocumentData): Stop {
+  return {
+    id,
+    name: data.name,
+    address: data.address,
+    latitude: data.latitude,
+    longitude: data.longitude,
+    sequence: data.sequence,
+    stopType: data.stopType as Stop["stopType"],
+    source: data.source as Stop["source"],
+    notes: data.notes,
+    visitMinutes: data.visitMinutes ?? null,
+    overnight: data.overnight,
+    hotels: (data.hotels ?? []) as Hotel[],
+    dayTrips: (data.dayTrips ?? []) as DayTrip[],
+  };
+}
+
+/** Firestore has no undefined values, so optional fields are written as null. */
+function toStopData(stop: Stop) {
+  return {
+    name: stop.name,
+    address: stop.address,
+    latitude: stop.latitude,
+    longitude: stop.longitude,
+    sequence: stop.sequence,
+    stopType: stop.stopType,
+    source: stop.source,
+    notes: stop.notes,
+    visitMinutes: stop.visitMinutes ?? null,
+    overnight: stop.overnight,
+    hotels: stop.hotels,
+    dayTrips: stop.dayTrips,
+  };
+}
+
+/** Snapshots and geometry are stored as JSON text, because Firestore does not allow arrays inside arrays. */
+function revisionData(revisionNumber: number, summary: string, snapshot: unknown, createdAt: Date) {
+  return { revisionNumber, summary, snapshot: JSON.stringify(snapshot), createdAt };
+}
+
+function toPreferences(value: unknown): TripPreferences {
   return { ...DEFAULT_PREFERENCES, ...(value as Partial<TripPreferences>) };
 }
 
@@ -63,22 +123,19 @@ function routeCacheKey(provider: string, from: LngLat, to: LngLat, preferences: 
 
 export async function getRouteLeg(from: LngLat, to: LngLat, preferences: TripPreferences, services = getServices()): Promise<RouteLeg> {
   const key = routeCacheKey(services.routing.provider, from, to, preferences);
-  const cached = await db.routeCache.findUnique({ where: { key } });
-  if (cached) {
+  const cached = await routeCacheRef(key).get();
+  if (cached.exists) {
+    const data = cached.data()!;
     return {
-      distanceMeters: cached.distanceMeters,
-      durationSeconds: cached.durationSeconds,
-      geometry: cached.geometry as LngLat[],
-      provider: cached.provider,
+      distanceMeters: data.distanceMeters,
+      durationSeconds: data.durationSeconds,
+      geometry: JSON.parse(data.geometry) as LngLat[],
+      provider: data.provider,
       mode: services.routing.mode,
     };
   }
   const leg = await services.routing.route(from, to, { preference: preferences.routePreference, avoid: preferences.avoid });
-  await db.routeCache.upsert({
-    where: { key },
-    create: { key, provider: leg.provider, distanceMeters: leg.distanceMeters, durationSeconds: leg.durationSeconds, geometry: leg.geometry },
-    update: {},
-  });
+  await routeCacheRef(key).set({ provider: leg.provider, distanceMeters: leg.distanceMeters, durationSeconds: leg.durationSeconds, geometry: JSON.stringify(leg.geometry), createdAt: new Date() });
   return leg;
 }
 
@@ -136,71 +193,71 @@ export async function computeLegs(stops: Stop[], preferences: TripPreferences, s
   return { legs, errors };
 }
 
-export async function loadOwnedTrip(tripId: string, ownerId: string): Promise<TripRow> {
-  const trip = await db.trip.findFirst({ where: { id: tripId, ownerId } });
-  if (!trip) throw new AppError(404, "trip_not_found", "Trip not found.");
-  return trip;
+export async function loadOwnedTrip(tripId: string, ownerId: string): Promise<TripRecord> {
+  const snap = await tripRef(tripId).get();
+  if (!snap.exists || snap.data()!.ownerId !== ownerId) throw new AppError(404, "trip_not_found", "Trip not found.");
+  return toTripRecord(snap.id, snap.data()!);
 }
 
 export async function listTripsForOwner(ownerId: string) {
-  const trips = await db.trip.findMany({ where: { ownerId }, orderBy: { updatedAt: "desc" }, include: { stops: { select: { id: true } } } });
-  return trips.map((trip) => ({
-    id: trip.id,
-    name: trip.name,
-    startDate: toDateOnly(trip.startDate),
-    durationDays: trip.durationDays,
-    stopCount: trip.stops.length,
-    updatedAt: trip.updatedAt.toISOString(),
-  }));
+  const snaps = await tripsRef().where("ownerId", "==", ownerId).get();
+  const trips = await Promise.all(
+    snaps.docs.map(async (snap) => {
+      const record = toTripRecord(snap.id, snap.data());
+      const stopCount = (await stopsRef(record.id).count().get()).data().count;
+      return { id: record.id, name: record.name, startDate: toDateOnly(record.startDate), durationDays: record.durationDays, stopCount, updatedAt: record.updatedAt };
+    }),
+  );
+  return trips.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()).map((trip) => ({ ...trip, updatedAt: trip.updatedAt.toISOString() }));
 }
 
 export async function createTrip(ownerId: string, input: { name: string; notes?: string; startDate?: string | null; durationDays?: number | null; roundTrip?: boolean; origin: Endpoint; destination: Endpoint }) {
   const id = randomUUID();
-  await db.$transaction(async (tx) => {
-    await tx.trip.create({
-      data: {
-        id,
-        ownerId,
-        name: input.name,
-        notes: input.notes ?? "",
-        startDate: input.startDate ? new Date(`${input.startDate}T00:00:00Z`) : null,
-        durationDays: input.durationDays ?? null,
-        preferences: DEFAULT_PREFERENCES as unknown as Prisma.InputJsonValue,
-      },
-    });
-    const endpoints: [Endpoint, Stop["stopType"]][] = [
-      [input.origin, "origin"],
-      [input.destination, "destination"],
-    ];
-    const stops: Stop[] = endpoints.map(([endpoint, stopType], sequence) => ({
-      id: randomUUID(),
-      name: endpoint.name,
-      address: endpoint.address ?? "",
-      latitude: endpoint.latitude,
-      longitude: endpoint.longitude,
-      sequence,
-      stopType,
-      source: "user",
-      notes: "",
-      visitMinutes: null,
-      overnight: stopType === "destination",
-      hotels: [],
-      dayTrips: [],
-    }));
-    const allStops = input.roundTrip ? renumber([...stops, makeReturnStop(stops[0])]) : stops;
-    for (const stop of allStops) await tx.stop.create({ data: { ...stop, tripId: id } });
-    await tx.tripRevision.create({
-      data: { tripId: id, revisionNumber: 1, summary: "Trip created", snapshot: { stops: allStops, preferences: DEFAULT_PREFERENCES } as unknown as Prisma.InputJsonValue },
-    });
+  const now = new Date();
+  const endpoints: [Endpoint, Stop["stopType"]][] = [
+    [input.origin, "origin"],
+    [input.destination, "destination"],
+  ];
+  const stops: Stop[] = endpoints.map(([endpoint, stopType], sequence) => ({
+    id: randomUUID(),
+    name: endpoint.name,
+    address: endpoint.address ?? "",
+    latitude: endpoint.latitude,
+    longitude: endpoint.longitude,
+    sequence,
+    stopType,
+    source: "user",
+    notes: "",
+    visitMinutes: null,
+    overnight: stopType === "destination",
+    hotels: [],
+    dayTrips: [],
+  }));
+  const allStops = input.roundTrip ? renumber([...stops, makeReturnStop(stops[0])]) : stops;
+
+  const batch = getDb().batch();
+  batch.set(tripRef(id), {
+    ownerId,
+    name: input.name,
+    notes: input.notes ?? "",
+    startDate: input.startDate ? new Date(`${input.startDate}T00:00:00Z`) : null,
+    durationDays: input.durationDays ?? null,
+    preferences: DEFAULT_PREFERENCES,
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
   });
+  for (const stop of allStops) batch.set(stopsRef(id).doc(stop.id), toStopData(stop));
+  batch.set(revisionsRef(id).doc(revisionId(1)), revisionData(1, "Trip created", { stops: allStops, preferences: DEFAULT_PREFERENCES }, now));
+  await batch.commit();
   return id;
 }
 
 export async function getTripView(tripId: string, ownerId: string, services = getServices()): Promise<TripView> {
   const trip = await loadOwnedTrip(tripId, ownerId);
-  const stopRows = await db.stop.findMany({ where: { tripId }, orderBy: { sequence: "asc" } });
+  const stopSnaps = await stopsRef(tripId).orderBy("sequence").get();
   const preferences = toPreferences(trip.preferences);
-  const stops = sortStops(stopRows.map(toStop));
+  const stops = sortStops(stopSnaps.docs.map((snap) => toStop(snap.id, snap.data())));
   const { legs, errors } = await computeLegs(stops, preferences, services);
   const dayTrips = await computeDayTrips(stops, preferences, services);
   const routeGeometry = legs.flatMap((leg) => leg.geometry);
@@ -227,127 +284,108 @@ export async function getTripView(tripId: string, ownerId: string, services = ge
 }
 
 /**
- * Applies typed operations atomically. The version check and increment happen in one
- * conditional update, so two tabs (or the AI and the user) cannot both apply the same base version.
+ * Applies typed operations atomically. The version is read and checked inside the same transaction
+ * as the writes, so two tabs (or the AI and the user) cannot both apply the same base version.
  */
 export async function applyTripChange(input: { tripId: string; ownerId: string; expectedVersion: number; operations: TripOperation[]; summary: string }) {
-  await loadOwnedTrip(input.tripId, input.ownerId);
-  await db.$transaction(async (tx) => {
-    const bumped = await tx.trip.updateMany({
-      where: { id: input.tripId, ownerId: input.ownerId, version: input.expectedVersion },
-      data: { version: { increment: 1 } },
-    });
-    if (bumped.count === 0) {
+  await getDb().runTransaction(async (tx) => {
+    const tripSnap = await tx.get(tripRef(input.tripId));
+    if (!tripSnap.exists || tripSnap.data()!.ownerId !== input.ownerId) throw new AppError(404, "trip_not_found", "Trip not found.");
+    if (tripSnap.data()!.version !== input.expectedVersion) {
       throw new AppError(409, "version_conflict", "This trip changed in another window. Reload to see the latest version, then try again.");
     }
-    const current = await tx.stop.findMany({ where: { tripId: input.tripId } });
-    const tripRow = await tx.trip.findUniqueOrThrow({ where: { id: input.tripId } });
-    const before = { stops: sortStops(current.map(toStop)), preferences: toPreferences(tripRow.preferences) };
+    const stopSnaps = await tx.get(stopsRef(input.tripId));
+    const latest = await tx.get(revisionsRef(input.tripId).orderBy("revisionNumber", "desc").limit(1));
+    const current = stopSnaps.docs.map((snap) => toStop(snap.id, snap.data()));
+    const before = { stops: sortStops(current), preferences: toPreferences(tripSnap.data()!.preferences) };
     const result = applyOperations(before, input.operations);
+    const nextRevision = (latest.docs[0]?.data().revisionNumber ?? 0) + 1;
 
-    const keptIds = result.stops.map((stop) => stop.id);
-    const removedIds = current.map((row) => row.id).filter((id) => !keptIds.includes(id));
-    if (removedIds.length) {
-      await tx.stop.deleteMany({ where: { id: { in: removedIds } } });
+    const keptIds = new Set(result.stops.map((stop) => stop.id));
+    for (const stop of current) {
+      if (!keptIds.has(stop.id)) tx.delete(stopsRef(input.tripId).doc(stop.id));
     }
-    for (const stop of result.stops) {
-      const data = {
-        name: stop.name,
-        address: stop.address,
-        latitude: stop.latitude,
-        longitude: stop.longitude,
-        sequence: stop.sequence,
-        stopType: stop.stopType,
-        source: stop.source,
-        notes: stop.notes,
-        visitMinutes: stop.visitMinutes,
-        overnight: stop.overnight,
-        hotels: stop.hotels as unknown as Prisma.InputJsonValue,
-        dayTrips: stop.dayTrips as unknown as Prisma.InputJsonValue,
-      };
-      await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
-    }
-    await tx.trip.update({
-      where: { id: input.tripId },
-      data: { preferences: result.preferences as unknown as Prisma.InputJsonValue },
-    });
+    for (const stop of result.stops) tx.set(stopsRef(input.tripId).doc(stop.id), toStopData(stop));
 
-    const revisionCount = await tx.tripRevision.count({ where: { tripId: input.tripId } });
-    await tx.tripRevision.create({
-      data: {
-        tripId: input.tripId,
-        revisionNumber: revisionCount + 1,
-        summary: input.summary,
-        snapshot: { stops: result.stops, preferences: result.preferences } as unknown as Prisma.InputJsonValue,
-      },
-    });
+    const now = new Date();
+    tx.update(tripRef(input.tripId), { preferences: result.preferences, version: input.expectedVersion + 1, updatedAt: now });
+    tx.set(revisionsRef(input.tripId).doc(revisionId(nextRevision)), revisionData(nextRevision, input.summary, { stops: result.stops, preferences: result.preferences }, now));
   });
 }
 
 export async function updateTripDetails(input: { tripId: string; ownerId: string; expectedVersion: number; name?: string; notes?: string; startDate?: string | null; durationDays?: number | null }) {
-  await loadOwnedTrip(input.tripId, input.ownerId);
-  const updated = await db.trip.updateMany({
-    where: { id: input.tripId, ownerId: input.ownerId, version: input.expectedVersion },
-    data: {
+  await getDb().runTransaction(async (tx) => {
+    const tripSnap = await tx.get(tripRef(input.tripId));
+    if (!tripSnap.exists || tripSnap.data()!.ownerId !== input.ownerId) throw new AppError(404, "trip_not_found", "Trip not found.");
+    if (tripSnap.data()!.version !== input.expectedVersion) throw new AppError(409, "version_conflict", "This trip changed in another window. Reload to see the latest version.");
+    tx.update(tripRef(input.tripId), {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
       ...(input.startDate !== undefined ? { startDate: input.startDate ? new Date(`${input.startDate}T00:00:00Z`) : null } : {}),
       ...(input.durationDays !== undefined ? { durationDays: input.durationDays } : {}),
-      version: { increment: 1 },
-    },
+      version: input.expectedVersion + 1,
+      updatedAt: new Date(),
+    });
   });
-  if (updated.count === 0) throw new AppError(409, "version_conflict", "This trip changed in another window. Reload to see the latest version.");
 }
 
 /** Restores the state from before the most recent change. The restore itself is recorded as a new revision. */
 export async function undoLastChange(input: { tripId: string; ownerId: string; expectedVersion: number }) {
   await loadOwnedTrip(input.tripId, input.ownerId);
-  const revisions = await db.tripRevision.findMany({ where: { tripId: input.tripId }, orderBy: { revisionNumber: "desc" }, take: 2 });
-  const [latest, previous] = revisions;
+  const revisions = await revisionsRef(input.tripId).orderBy("revisionNumber", "desc").limit(2).get();
+  const [latest, previous] = revisions.docs.map((snap) => snap.data());
   if (!latest || !previous || latest.revisionNumber === 1) throw new AppError(409, "nothing_to_undo", "There is no earlier change to undo.");
-  const snapshot = previous.snapshot as unknown as { stops?: Stop[]; preferences?: TripPreferences };
+  const snapshot = JSON.parse(previous.snapshot) as { stops?: Stop[]; preferences?: TripPreferences };
   if (!snapshot.stops) throw new AppError(409, "nothing_to_undo", "There is no earlier change to undo.");
   const undone = snapshot.stops;
-  await db.$transaction(async (tx) => {
-    const bumped = await tx.trip.updateMany({ where: { id: input.tripId, version: input.expectedVersion }, data: { version: { increment: 1 } } });
-    if (bumped.count === 0) throw new AppError(409, "version_conflict", "This trip changed in another window. Reload and try again.");
-    const currentIds = (await tx.stop.findMany({ where: { tripId: input.tripId }, select: { id: true } })).map((row) => row.id);
-    const restoredIds = undone.map((stop) => stop.id);
-    const removed = currentIds.filter((id) => !restoredIds.includes(id));
-    if (removed.length) {
-      await tx.stop.deleteMany({ where: { id: { in: removed } } });
+  await getDb().runTransaction(async (tx) => {
+    const tripSnap = await tx.get(tripRef(input.tripId));
+    if (!tripSnap.exists || tripSnap.data()!.version !== input.expectedVersion) {
+      throw new AppError(409, "version_conflict", "This trip changed in another window. Reload and try again.");
     }
-    for (const stop of undone) {
-      const data = { name: stop.name, address: stop.address, latitude: stop.latitude, longitude: stop.longitude, sequence: stop.sequence, stopType: stop.stopType, source: stop.source, notes: stop.notes, visitMinutes: stop.visitMinutes, overnight: stop.overnight, hotels: stop.hotels as unknown as Prisma.InputJsonValue, dayTrips: stop.dayTrips as unknown as Prisma.InputJsonValue };
-      await tx.stop.upsert({ where: { id: stop.id }, create: { id: stop.id, tripId: input.tripId, ...data }, update: data });
+    const currentSnaps = await tx.get(stopsRef(input.tripId));
+    const latestRevision = await tx.get(revisionsRef(input.tripId).orderBy("revisionNumber", "desc").limit(1));
+    const nextRevision = (latestRevision.docs[0]?.data().revisionNumber ?? 0) + 1;
+    const restoredIds = new Set(undone.map((stop) => stop.id));
+    for (const snap of currentSnaps.docs) {
+      if (!restoredIds.has(snap.id)) tx.delete(snap.ref);
     }
-    if (snapshot.preferences) await tx.trip.update({ where: { id: input.tripId }, data: { preferences: snapshot.preferences as unknown as Prisma.InputJsonValue } });
-    const count = await tx.tripRevision.count({ where: { tripId: input.tripId } });
-    await tx.tripRevision.create({ data: { tripId: input.tripId, revisionNumber: count + 1, summary: `Undid: ${latest.summary}`, snapshot: { stops: undone, preferences: snapshot.preferences } as unknown as Prisma.InputJsonValue } });
+    for (const stop of undone) tx.set(stopsRef(input.tripId).doc(stop.id), toStopData(stop));
+
+    const now = new Date();
+    const tripUpdate: Record<string, unknown> = { version: input.expectedVersion + 1, updatedAt: now };
+    if (snapshot.preferences) tripUpdate.preferences = snapshot.preferences;
+    tx.update(tripRef(input.tripId), tripUpdate);
+    tx.set(revisionsRef(input.tripId).doc(revisionId(nextRevision)), revisionData(nextRevision, `Undid: ${latest.summary}`, { stops: undone, preferences: snapshot.preferences }, now));
   });
 }
 
 export async function deleteTrip(tripId: string, ownerId: string) {
   await loadOwnedTrip(tripId, ownerId);
-  await db.trip.delete({ where: { id: tripId } });
+  await getDb().recursiveDelete(tripRef(tripId));
 }
 
 /** Deletes the chosen trips. Any ID that is not one of the owner's trips is refused, so nothing else is touched. */
 export async function deleteTripsByIds(ownerId: string, tripIds: string[]) {
   const unique = [...new Set(tripIds)];
-  const owned = await db.trip.count({ where: { ownerId, id: { in: unique } } });
-  if (owned !== unique.length) throw new AppError(404, "trip_not_found", "One or more selected trips could not be found. Refresh the list and try again.");
-  const result = await db.trip.deleteMany({ where: { ownerId, id: { in: unique } } });
-  return result.count;
+  const snaps = unique.length ? await getDb().getAll(...unique.map((id) => tripRef(id))) : [];
+  const owned = snaps.filter((snap) => snap.exists && snap.data()!.ownerId === ownerId);
+  if (owned.length !== unique.length) throw new AppError(404, "trip_not_found", "One or more selected trips could not be found. Refresh the list and try again.");
+  await Promise.all(owned.map((snap) => getDb().recursiveDelete(snap.ref)));
+  return owned.length;
 }
 
 /** Trips that started before today. Trips with no start date are not historical, so they are kept. */
-function historicalWhere(ownerId: string, today: Date): Prisma.TripWhereInput {
-  return { ownerId, startDate: { lt: today } };
+async function historicalTripSnaps(ownerId: string, today: Date) {
+  const snaps = await tripsRef().where("ownerId", "==", ownerId).get();
+  return snaps.docs.filter((snap) => {
+    const startDate = toDate(snap.data().startDate);
+    return startDate !== null && startDate < today;
+  });
 }
 
 export async function countHistoricalTrips(ownerId: string, today = startOfUtcDay(new Date())) {
-  return db.trip.count({ where: historicalWhere(ownerId, today) });
+  return (await historicalTripSnaps(ownerId, today)).length;
 }
 
 /**
@@ -355,14 +393,12 @@ export async function countHistoricalTrips(ownerId: string, today = startOfUtcDa
  * delete is refused if the number has changed, so the user never removes trips they did not see.
  */
 export async function deleteHistoricalTrips(ownerId: string, expectedCount: number, today = startOfUtcDay(new Date())) {
-  const result = await db.$transaction(async (tx) => {
-    const current = await tx.trip.count({ where: historicalWhere(ownerId, today) });
-    if (current !== expectedCount) {
-      throw new AppError(409, "count_changed", `The number of past trips changed (now ${current}). Review the list and try again.`);
-    }
-    return tx.trip.deleteMany({ where: historicalWhere(ownerId, today) });
-  });
-  return result.count;
+  const snaps = await historicalTripSnaps(ownerId, today);
+  if (snaps.length !== expectedCount) {
+    throw new AppError(409, "count_changed", `The number of past trips changed (now ${snaps.length}). Review the list and try again.`);
+  }
+  await Promise.all(snaps.map((snap) => getDb().recursiveDelete(snap.ref)));
+  return snaps.length;
 }
 
 function startOfUtcDay(date: Date) {
@@ -375,8 +411,9 @@ const HOTEL_SEARCH_RADIUS_METERS = Math.round(10 * 1609.344);
 export async function findHotelsNearStop(input: { tripId: string; ownerId: string; stopId: string; services?: Services }) {
   const services = input.services ?? getServices();
   await loadOwnedTrip(input.tripId, input.ownerId);
-  const stop = await db.stop.findFirst({ where: { id: input.stopId, tripId: input.tripId } });
-  if (!stop) throw new AppError(404, "stop_not_found", "That stop no longer exists. Refresh the trip and try again.");
+  const snap = await stopsRef(input.tripId).doc(input.stopId).get();
+  if (!snap.exists) throw new AppError(404, "stop_not_found", "That stop no longer exists. Refresh the trip and try again.");
+  const stop = toStop(snap.id, snap.data()!);
   if (!stop.overnight) throw new AppError(422, "not_overnight", "Hotels can only be added to an overnight stop.");
   if (!services.places.searchHotels) throw new AppError(409, "hotel_search_unavailable", "Hotel search needs a Geoapify places key. Add GEOAPIFY_API_KEY to .env.local.");
   return services.places.searchHotels([stop.longitude, stop.latitude], HOTEL_SEARCH_RADIUS_METERS);

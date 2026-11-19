@@ -1,8 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTestUsers } from "./cleanup";
 
 type Modules = {
-  db: typeof import("@/lib/db").db;
+  users: typeof import("@/server/users");
+  getDb: typeof import("@/lib/firestore").getDb;
   tripService: typeof import("@/server/tripService");
   proposals: typeof import("@/server/proposals");
   demo: typeof import("@/services/demo/demoServices");
@@ -17,7 +19,7 @@ const origin = { name: "Austin, TX, USA", latitude: 30.2672, longitude: -97.7431
 const destination = { name: "Denver, CO, USA", latitude: 39.7392, longitude: -104.9903 };
 
 async function newUser(label: string) {
-  const user = await m.db.user.create({ data: { email: `${label}-${randomUUID()}@test.local`, passwordHash: "x" } });
+  const user = await m.users.createUser(`${label}-${randomUUID()}@test.local`, "x");
   ownerIds.push(user.id);
   return user.id;
 }
@@ -50,7 +52,8 @@ const addStop = (name: string, latitude: number, longitude: number, index?: numb
 
 beforeAll(async () => {
   m = {
-    db: (await import("@/lib/db")).db,
+    users: await import("@/server/users"),
+    getDb: (await import("@/lib/firestore")).getDb,
     tripService: await import("@/server/tripService"),
     proposals: await import("@/server/proposals"),
     demo: await import("@/services/demo/demoServices"),
@@ -63,8 +66,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (m) await m.db.user.deleteMany({ where: { id: { in: ownerIds } } });
-  await m?.db.$disconnect();
+  await removeTestUsers(ownerIds);
 });
 
 describe("trip creation and ownership", () => {
@@ -91,14 +93,17 @@ describe("trip creation and ownership", () => {
   });
 
   it("hashes passwords and stores session tokens only as hashes", async () => {
-    const user = await m.db.user.create({ data: { email: `session-${randomUUID()}@test.local`, passwordHash: await m.auth.hashPassword("correct horse") } });
+    const user = await m.users.createUser(`session-${randomUUID()}@test.local`, await m.auth.hashPassword("correct horse"));
     ownerIds.push(user.id);
     expect(await m.auth.verifyPassword("correct horse", user.passwordHash)).toBe(true);
     expect(await m.auth.verifyPassword("wrong", user.passwordHash)).toBe(false);
     const { token } = await m.auth.createSession(user.id);
-    const stored = await m.db.session.findFirstOrThrow({ where: { userId: user.id } });
-    expect(stored.id).not.toBe(token);
-    expect(stored.id).toHaveLength(64);
+    const hashedId = createHash("sha256").update(token).digest("hex");
+    const stored = await m.getDb().collection("sessions").doc(hashedId).get();
+    expect(stored.exists).toBe(true);
+    expect(stored.data()!.userId).toBe(user.id);
+    expect(hashedId).not.toBe(token);
+    expect(hashedId).toHaveLength(64);
   });
 });
 

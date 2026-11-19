@@ -41,12 +41,12 @@ export class GeoapifyPlacesService implements PlacesService {
   constructor(private readonly apiKey: string) {}
 
   /** Cities, towns and villages within the search radius of the route. Population is not returned, so place type is the size signal. */
-  async searchSettlements(routeGeometry: LngLat[], radiusMeters: number): Promise<SettlementCandidate[]> {
+  async searchSettlements(routeGeometry: LngLat[], radiusMeters: number, limit = 100): Promise<SettlementCandidate[]> {
     if (routeGeometry.length < 2) return [];
     const body = {
       categories: SETTLEMENT_CATEGORIES,
       filter: { type: "polyline", geometry: { type: "LineString", coordinates: sampleLine(routeGeometry, ROUTE_POINTS) }, buffer: radiusMeters },
-      limit: 100,
+      limit,
     };
     const data = await fetchProviderJson<{ features?: GeoapifyFeature[] }>(BASE_URL, {
       provider: PROVIDER,
@@ -62,11 +62,12 @@ export class GeoapifyPlacesService implements PlacesService {
       const props = feature.properties ?? {};
       const latitude = props.lat ?? feature.geometry?.coordinates?.[1];
       const longitude = props.lon ?? feature.geometry?.coordinates?.[0];
-      if (!props.name || !settlementKind(props.categories ?? []) || typeof latitude !== "number" || typeof longitude !== "number") continue;
+      const kind = settlementKind(props.categories ?? []);
+      if (!props.name || !kind || typeof latitude !== "number" || typeof longitude !== "number") continue;
       const externalId = props.place_id ?? `${latitude},${longitude}`;
       if (seen.has(externalId)) continue;
       seen.add(externalId);
-      settlements.push({ externalId, name: props.name, region: props.state ?? null, latitude, longitude });
+      settlements.push({ externalId, name: props.name, kind, region: props.state ?? null, latitude, longitude });
     }
     return settlements;
   }

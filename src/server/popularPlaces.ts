@@ -1,10 +1,12 @@
 import { z } from "zod";
-import { distanceToLineMeters, sampleLine, type LngLat } from "@/domain/geo";
+import { distanceToLineMeters, haversineMeters, sampleLine, type LngLat } from "@/domain/geo";
+import type { Stop } from "@/domain/trip";
 import { TtlCache } from "@/lib/cache";
 import { ProviderError } from "@/lib/errors";
 import { fetchProviderJson } from "@/lib/http";
 import { generateJsonText } from "@/services/assistant/gemini";
 import type { Services } from "@/services/providers";
+import type { SettlementCandidate } from "@/services/types";
 import { normalizeName, titleMatchesPlace } from "@/services/places/names";
 import type { TripView } from "./tripService";
 
@@ -65,26 +67,67 @@ async function wikipediaSummary(title: string, userAgent: string): Promise<Wikip
 
 export type PopularPlacesResult = { status: "ok" | "unavailable"; places: PopularPlace[]; note: string };
 
+const BUSY_NOTE = "Google Gemini is busy right now, so suggestions could not be made. This is usually temporary. Wait a moment and press Try again.";
+
 const SYSTEM_INSTRUCTION = [
   "You suggest popular places for a road trip.",
   "Only suggest places you are confident exist and are well known: parks, landmarks, museums, historic sites, mountains, and attractions.",
   "Every suggestion must be within 50 miles of the driving route or of one of the listed stops. Do not suggest anything farther away.",
+  "Use the towns near the route and the route path to find places along the way, not only places near the stops.",
   "Leave out hotels, restaurants, shops, and small businesses. Do not invent names.",
   `Reply only with JSON: {"places":[{"name": string, "type": string, "reason": string}]} with at most ${SUGGESTIONS_REQUESTED} items, most popular first. The reason is one short sentence.`,
 ].join(" ");
 
-/** The model is told the stops and the 50-mile rule. Coordinates are never taken from the model. */
-export function buildPrompt(view: TripView): string {
+/** Route context sent to the model: the towns the route passes through, and a few points along its path. */
+export type RouteContext = { towns: string[]; path: LngLat[] };
+const PATH_POINTS = 30;
+const TOWN_LIMIT = 40;
+const TOWN_BUFFER_METERS = 50 * METERS_PER_MILE;
+/** Long routes have many towns; the search must return enough of them that every stretch of the route is covered. */
+const TOWN_SEARCH_LIMIT = 500;
+const TOWN_RANK: Record<SettlementCandidate["kind"], number> = { city: 0, town: 1, village: 2 };
+
+/** The model is told the stops, the route context, and the 50-mile rule. Coordinates are never taken from the model. */
+export function buildPrompt(view: TripView, context: RouteContext = { towns: [], path: [] }, includeEndpoints = true): string {
   const stops = view.stops.map((stop) => `- ${stop.name} (${stop.stopType}) at ${stop.latitude.toFixed(4)}, ${stop.longitude.toFixed(4)}`).join("\n");
-  return `Trip: ${view.name}\nStops in order:\n${stops}\nSuggest up to ${SUGGESTIONS_REQUESTED} popular places within 50 miles of this route or these stops.`;
+  const towns = context.towns.length ? `\nTowns near the route:\n${context.towns.map((town) => `- ${town}`).join("\n")}` : "";
+  const path = context.path.length ? `\nRoute path (lat, lon), in order:\n${context.path.map(([lon, lat]) => `- ${lat.toFixed(3)}, ${lon.toFixed(3)}`).join("\n")}` : "";
+  const skipEnds = includeEndpoints ? "" : "\nDo not suggest places within 50 miles of the origin or the return point.";
+  return `Trip: ${view.name}\nStops in order:\n${stops}${towns}${path}\nSuggest up to ${SUGGESTIONS_REQUESTED} popular places within 50 miles of this route or these stops.${skipEnds}`;
+}
+
+/** Drops places within 50 miles of the origin or the return point. The destination and other stops do not count. */
+export function excludeNearEndpoints<T extends { latitude: number; longitude: number }>(places: T[], stops: Stop[]): T[] {
+  const endpoints = stops.filter((stop) => stop.stopType === "origin" || stop.stopType === "return");
+  return places.filter((place) => endpoints.every((stop) => haversineMeters([stop.longitude, stop.latitude], [place.longitude, place.latitude]) > MAX_DISTANCE_METERS));
+}
+
+/**
+ * Towns within 50 miles of the route, from the places provider. Cities come first, then nearer places,
+ * so the limit keeps the places most likely to hold attractions. A failure leaves the towns out rather than stopping the search.
+ */
+export async function routeContext(view: TripView, services: Services): Promise<RouteContext> {
+  const path = sampleLine(view.routeGeometry, PATH_POINTS);
+  const found = services.places.searchSettlements ? await services.places.searchSettlements(view.routeGeometry, TOWN_BUFFER_METERS, TOWN_SEARCH_LIMIT).catch(() => []) : [];
+  const vertices = sampleLine(view.routeGeometry, 600);
+  const ranked = found
+    .map((town) => ({ town, meters: distanceToLineMeters([town.longitude, town.latitude], vertices) }))
+    .sort((a, b) => TOWN_RANK[a.town.kind] - TOWN_RANK[b.town.kind] || a.meters - b.meters);
+  const names = [...new Set(ranked.map(({ town }) => (town.region ? `${town.name}, ${town.region}` : town.name)))].slice(0, TOWN_LIMIT);
+  return { towns: names, path };
 }
 
 /** Parses the model's JSON answer. Anything that is not the expected shape is rejected rather than shown. */
 export function parseSuggestions(text: string): z.infer<typeof suggestionSchema>["places"] {
+  // Models sometimes wrap the JSON in a code fence or add a sentence around it, so take the outermost object.
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
   let json: unknown;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(start >= 0 && end > start ? text.slice(start, end + 1) : text);
   } catch {
+    // Logged so an unreadable reply can be diagnosed; the user only sees the generic message.
+    console.error(`Popular places: reply was not JSON (${text.length} chars): ${JSON.stringify(text.slice(0, 500))}`);
     throw new ProviderError("Google Gemini", "invalid_response", "The suggestions could not be read. Try again.");
   }
   const parsed = suggestionSchema.safeParse(json);
@@ -141,16 +184,23 @@ export async function verifySuggestion(
 }
 
 /** Asks the model for popular places, then keeps only the ones Wikidata confirms within 50 miles. */
-export async function findPopularPlaces(view: TripView, services: Services, userAgent = WIKIDATA_USER_AGENT): Promise<PopularPlacesResult> {
+export async function findPopularPlaces(view: TripView, services: Services, includeEndpoints: boolean, userAgent = WIKIDATA_USER_AGENT): Promise<PopularPlacesResult> {
   if (!services.assistantConfig) return { status: "unavailable", places: [], note: "Popular place suggestions need a Gemini key (GEMINI_API_KEY)." };
   if (view.routeGeometry.length < 2) return { status: "ok", places: [], note: "Calculate a route before asking for popular places." };
 
-  const key = JSON.stringify({ id: view.id, stops: view.stops.map((stop) => [stop.id, stop.latitude, stop.longitude]), route: view.routeGeometry.length });
+  const key = JSON.stringify({ id: view.id, stops: view.stops.map((stop) => [stop.id, stop.latitude, stop.longitude]), route: view.routeGeometry.length, includeEndpoints });
   const cached = cache.get(key);
   if (cached) return cached;
 
   const { apiKey, model } = services.assistantConfig;
-  const text = await generateJsonText(apiKey, model, SYSTEM_INSTRUCTION, buildPrompt(view));
+  let text: string;
+  try {
+    text = await generateJsonText(apiKey, model, SYSTEM_INSTRUCTION, buildPrompt(view, await routeContext(view, services), includeEndpoints));
+  } catch (error) {
+    // A busy model is temporary, so say so and leave the result uncached so the user can retry.
+    if (error instanceof ProviderError && error.kind === "unavailable") return { status: "unavailable", places: [], note: BUSY_NOTE };
+    throw error;
+  }
   const suggestions = parseSuggestions(text);
   const vertices = sampleLine(view.routeGeometry, 600);
 
@@ -178,7 +228,8 @@ export async function findPopularPlaces(view: TripView, services: Services, user
 
   // A missing article leaves the summary empty; the place itself is still shown.
   const withSummaries: PopularPlace[] = [];
-  for (const { wikipediaTitle, ...place } of places) {
+  const kept = includeEndpoints ? places : excludeNearEndpoints(places, view.stops);
+  for (const { wikipediaTitle, ...place } of kept) {
     const summary = wikipediaTitle ? await wikipediaSummary(wikipediaTitle, userAgent) : null;
     withSummaries.push({ ...place, extract: briefExtract(summary?.extract ?? ""), wikipediaUrl: summary?.content_urls?.desktop?.page ?? null });
   }

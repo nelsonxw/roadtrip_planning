@@ -1,9 +1,10 @@
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { cookies } from "next/headers";
-import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { AppError } from "@/lib/errors";
+import { getDb } from "@/lib/firestore";
+import { findUserById } from "@/server/users";
 
 const scrypt = promisify(scryptCallback) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
 export const SESSION_COOKIE = "rt_session";
@@ -25,28 +26,33 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+const sessions = () => getDb().collection("sessions");
+
 export async function createSession(userId: string) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
-  await db.session.create({ data: { id: sha256(token), userId, expiresAt } });
+  await sessions().doc(sha256(token)).set({ userId, expiresAt, createdAt: new Date() });
   return { token, expiresAt };
 }
 
 export async function deleteSession(token: string) {
-  await db.session.deleteMany({ where: { id: sha256(token) } });
+  await sessions().doc(sha256(token)).delete();
 }
 
 /** Returns the signed-in user, or null. Session tokens are stored hashed, so a database leak does not expose live sessions. */
 export async function getCurrentUser() {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  const session = await db.session.findUnique({ where: { id: sha256(token) }, include: { user: true } });
-  if (!session) return null;
-  if (session.expiresAt < new Date()) {
-    await db.session.delete({ where: { id: session.id } }).catch(() => undefined);
+  const sessionRef = sessions().doc(sha256(token));
+  const snap = await sessionRef.get();
+  if (!snap.exists) return null;
+  const { userId, expiresAt } = snap.data()!;
+  if (expiresAt.toDate() < new Date()) {
+    await sessionRef.delete();
     return null;
   }
-  return { id: session.user.id, email: session.user.email };
+  const user = await findUserById(userId);
+  return user ? { id: user.id, email: user.email } : null;
 }
 
 export async function requireUser() {

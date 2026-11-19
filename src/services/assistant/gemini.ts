@@ -20,11 +20,11 @@ export type GenerateFn = (request: GenerateRequest) => Promise<GeminiContent>;
 
 type GenerateResponse = { candidates?: { content?: { role?: string; parts?: GeminiPart[] } }[] };
 
-const BUSY_RETRY_DELAYS_MS = [1500, 4000];
+const BUSY_RETRY_DELAYS_MS = [1500, 4000, 8000, 15000];
 
 /**
- * Google returns 503 when a model is briefly overloaded. Those responses come back quickly, so a
- * couple of short retries usually succeed. Timeouts and rate limits are not retried.
+ * Google returns 503 when a model is briefly overloaded. Those responses come back quickly, and
+ * overload can last several seconds, so the waits grow. Timeouts and rate limits are not retried.
  */
 async function requestWithBusyRetry<T>(attempt: () => Promise<T>): Promise<T> {
   for (const delay of BUSY_RETRY_DELAYS_MS) {
@@ -58,7 +58,11 @@ export async function generateJsonText(apiKey: string, model: string, systemInst
       retries: 0,
     }),
   );
-  const text = (data.candidates?.[0]?.content?.parts ?? []).map((part) => part.text ?? "").join("").trim();
+  const text = (data.candidates?.[0]?.content?.parts ?? [])
+    .filter((part) => !part.thought)
+    .map((part) => part.text ?? "")
+    .join("")
+    .trim();
   if (!text) throw new ProviderError(PROVIDER, "invalid_response", "The assistant returned no suggestions. Try again.");
   return text;
 }

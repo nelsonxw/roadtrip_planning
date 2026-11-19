@@ -43,6 +43,8 @@ export interface RoutingService {
 export type SettlementCandidate = {
   externalId: string;
   name: string;
+  /** Size class from the place type. Larger places are listed first when the list is limited. */
+  kind: "city" | "town" | "village";
   /** State or region name, used to tell apart towns with the same name. */
   region: string | null;
   latitude: number;
@@ -56,7 +58,7 @@ export interface PlacesService {
   readonly provider: string;
   readonly mode: ServiceMode;
   /** Cities, towns and villages near the route. Optional: not every provider can list settlements. */
-  searchSettlements?(routeGeometry: LngLat[], radiusMeters: number): Promise<SettlementCandidate[]>;
+  searchSettlements?(routeGeometry: LngLat[], radiusMeters: number, limit?: number): Promise<SettlementCandidate[]>;
   /** Hotels within a radius of a point, nearest first. Optional: only providers with accommodation data implement it. */
   searchHotels?(center: LngLat, radiusMeters: number): Promise<HotelCandidate[]>;
 }

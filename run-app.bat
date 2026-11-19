@@ -40,46 +40,15 @@ if not exist "node_modules\next" (
   )
 )
 
-rem 4. Prisma client
-if not exist "node_modules\.prisma\client\index.js" (
-  echo Generating the database client...
-  call npx prisma generate
-  if errorlevel 1 (
-    echo Prisma client generation failed. See the messages above.
-    pause
-    exit /b 1
-  )
-)
-
-rem 5. Database connection string from .env.local (quotes removed)
-for /f "tokens=1,* delims==" %%a in ('findstr /b "DATABASE_URL=" .env.local') do set DATABASE_URL=%%b
-set DATABASE_URL=%DATABASE_URL:"=%
-if not defined DATABASE_URL (
-  echo DATABASE_URL is missing from .env.local.
-  pause
-  exit /b 1
-)
-
-rem 6. Local database: start it in its own window if it is not running
-echo %DATABASE_URL% | findstr /c:"localhost:5433" >nul
-if not errorlevel 1 (
-  netstat -ano | findstr /r /c:":5433 .*LISTENING" >nul
-  if errorlevel 1 (
-    echo Starting the local database in a separate window...
-    start "RoadTrip database (keep open)" cmd /k "npm run db:dev"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\wait-for-port.ps1" -Port 5433 -TimeoutSeconds 30
-  )
-)
-
-rem 7. Apply database migrations
-call npx prisma migrate deploy
+rem 4. Firestore key file from .env.local
+findstr /b "GOOGLE_APPLICATION_CREDENTIALS=" .env.local >nul
 if errorlevel 1 (
-  echo Database migration failed. Make sure the database window shows "ready", or check DATABASE_URL in .env.local.
+  echo GOOGLE_APPLICATION_CREDENTIALS is missing from .env.local. Add the path to your Firebase service account key, then run this file again.
   pause
   exit /b 1
 )
 
-rem 8. Port 3000 must be free
+rem 5. Port 3000 must be free
 netstat -ano | findstr /r /c:":3000 .*LISTENING" >nul
 if not errorlevel 1 (
   echo Port 3000 is already in use. Close the other program or the old RoadTrip server window, then run this file again.
@@ -87,7 +56,7 @@ if not errorlevel 1 (
   exit /b 1
 )
 
-rem 9. Production build, only when the source changed since the last build (skipped in dev mode; --rebuild forces it)
+rem 6. Production build, only when the source changed since the last build (skipped in dev mode; --rebuild forces it)
 if /i "%~1"=="--dev" goto start_server
 if /i "%~1"=="--rebuild" goto build
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\needs-build.ps1"

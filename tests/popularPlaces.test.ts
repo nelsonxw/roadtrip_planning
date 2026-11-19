@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { briefExtract, buildPrompt, MAX_DISTANCE_METERS, parseSuggestions, verifySuggestion } from "@/server/popularPlaces";
+import { briefExtract, buildPrompt, excludeNearEndpoints, MAX_DISTANCE_METERS, parseSuggestions, routeContext, verifySuggestion } from "@/server/popularPlaces";
+import type { Services } from "@/services/providers";
 import type { TripView } from "@/server/tripService";
+import type { Stop } from "@/domain/trip";
 
 const route: [number, number][] = [
   [-101.83, 35.22],
@@ -43,6 +45,50 @@ describe("buildPrompt", () => {
     expect(prompt).toMatch(/within 50 miles of this route or these stops/);
     expect(prompt).toContain("Amarillo (origin)");
     expect(prompt).toContain("Pagosa Springs (destination)");
+  });
+
+  it("includes the towns the route passes through and the route path", () => {
+    const prompt = buildPrompt(view, { towns: ["Carlsbad, New Mexico", "Roswell, New Mexico"], path: route });
+    expect(prompt).toContain("Towns near the route:\n- Carlsbad, New Mexico");
+    expect(prompt).toContain("Route path (lat, lon), in order:");
+    expect(prompt).toContain("- 35.220, -101.830");
+  });
+
+  it("asks the model to skip the origin and return area when the user declines them", () => {
+    expect(buildPrompt(view, { towns: [], path: [] }, false)).toMatch(/Do not suggest places within 50 miles of the origin or the return point/);
+    expect(buildPrompt(view, { towns: [], path: [] }, true)).not.toMatch(/Do not suggest places within 50 miles/);
+  });
+});
+
+describe("routeContext", () => {
+  it("lists cities before towns, nearer places first, and stops at the limit", async () => {
+    const village = (i: number) => ({ externalId: `v${i}`, name: `Village ${i}`, kind: "village" as const, region: "Texas", latitude: 35.0, longitude: -101.74 + i * 0.001 });
+    const city = { externalId: "c", name: "Far City", kind: "city" as const, region: "New Mexico", latitude: 35.0, longitude: -102.5 };
+    const towns = [...Array.from({ length: 45 }, (_, i) => village(i)), city];
+    const services = { places: { searchSettlements: async () => towns } } as unknown as Services;
+    // Distances are measured to route vertices, so the test route needs enough points to sit on the line.
+    const denseRoute: [number, number][] = Array.from({ length: 101 }, (_, i) => [-101.83 + i * 0.0013, 35.22 - i * 0.0032]);
+    const context = await routeContext({ ...view, routeGeometry: denseRoute } as TripView, services);
+    expect(context.towns).toHaveLength(40);
+    expect(context.towns[0]).toBe("Far City, New Mexico");
+    expect(context.towns[1]).toBe("Village 0, Texas");
+  });
+});
+
+describe("excludeNearEndpoints", () => {
+  const stop = (stopType: string, latitude: number, longitude: number) => ({ stopType, latitude, longitude }) as unknown as Stop;
+  const stops = [stop("origin", 35.22, -101.83), stop("destination", 37.26, -107.01), stop("return", 35.22, -101.83), stop("required", 32.1753, -104.4431)];
+
+  it("drops places within 50 miles of the origin or return, and keeps the destination area and the rest", () => {
+    const nearOrigin = { name: "Near origin", latitude: 35.3, longitude: -101.9 };
+    const nearDestination = { name: "Near destination", latitude: 37.3, longitude: -107.0 };
+    const midRoute = { name: "Mid route", latitude: 34.9, longitude: -103.0 };
+    expect(excludeNearEndpoints([nearOrigin, nearDestination, midRoute], stops).map((p) => p.name)).toEqual(["Near destination", "Mid route"]);
+  });
+
+  it("ignores optional and required stops when deciding what is near an end", () => {
+    const atRequiredStop = { name: "At required stop", latitude: 32.1753, longitude: -104.4431 };
+    expect(excludeNearEndpoints([atRequiredStop], stops)).toHaveLength(1);
   });
 });
 

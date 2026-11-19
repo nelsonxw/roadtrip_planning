@@ -104,11 +104,11 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
     setHotelSearch(null);
   };
   const filterHotelResults = (query: string) => setHotelSearch((prev) => (prev ? { ...prev, query } : prev));
-  const askPopular = async () => {
+  const askPopular = async (includeEndpoints: boolean) => {
     setAskingPopular(true);
     setPopularError(null);
     try {
-      setPopular(await api<PopularPlacesResult>(`/api/trips/${tripId}/popular-places`));
+      setPopular(await api<PopularPlacesResult>(`/api/trips/${tripId}/popular-places?includeEndpoints=${includeEndpoints}`));
     } catch (err) {
       setPopularError(err instanceof Error ? err.message : "Popular places are unavailable right now.");
     } finally {
@@ -270,7 +270,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
 
         <section className={`${mobileTab === "chat" ? "flex" : "hidden"} w-full flex-col border-l border-slate-200 bg-white md:flex md:shrink-0 ${chatOpen ? "md:w-[var(--right-width)]" : "md:w-12"}`} aria-label="Trip assistant">
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-            {chatOpen && <h2 className="text-sm font-semibold text-slate-900">Assistant</h2>}
+            {chatOpen && <h2 className="text-sm font-semibold text-slate-900">Trip Planner / Assistant</h2>}
             <button type="button" className="hidden rounded border px-2 py-0.5 text-xs md:block" aria-expanded={chatOpen} onClick={() => setChatOpen(!chatOpen)}>
               {chatOpen ? "Collapse" : "Chat"}
             </button>

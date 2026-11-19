@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RoadTrip AI",
+  title: "My Road Trip Planner",
   description: "Plan driving routes, stops and daily itineraries with an assistant that proposes changes before applying them.",
 };
 

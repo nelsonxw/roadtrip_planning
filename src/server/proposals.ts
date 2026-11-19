@@ -1,7 +1,7 @@
-import { Prisma } from "@prisma/client";
+import type { DocumentData } from "firebase-admin/firestore";
 import { tripOperationSchema, type TripOperation } from "@/domain/trip";
-import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
+import { getDb } from "@/lib/firestore";
 import { getServices } from "@/services/providers";
 import { assertProposalNotStale, checkProposalShape, simulateImpact, type ProposalImpact } from "./assistant";
 import { planTripChange } from "./aiPlanner";
@@ -13,26 +13,50 @@ export type ProposalView = { id: string; summary: string; operations: TripOperat
 
 const storedOperations = z.array(tripOperationSchema);
 
+const tripDoc = (tripId: string) => getDb().collection("trips").doc(tripId);
+const messagesRef = (tripId: string) => tripDoc(tripId).collection("messages");
+const proposalsRef = (tripId: string) => tripDoc(tripId).collection("proposals");
+
 async function requireOwnedTrip(tripId: string, ownerId: string) {
-  const trip = await db.trip.findFirst({ where: { id: tripId, ownerId }, select: { id: true, version: true } });
-  if (!trip) throw new AppError(404, "trip_not_found", "Trip not found.");
-  return trip;
+  const snap = await tripDoc(tripId).get();
+  if (!snap.exists || snap.data()!.ownerId !== ownerId) throw new AppError(404, "trip_not_found", "Trip not found.");
+  return { id: snap.id, version: snap.data()!.version as number };
 }
 
-function toProposalView(row: { id: string; summary: string; operations: Prisma.JsonValue; impact: Prisma.JsonValue; status: string }): ProposalView {
-  return { id: row.id, summary: row.summary, operations: storedOperations.parse(row.operations), impact: row.impact as unknown as ProposalImpact, status: row.status };
+/** Proposals are stored as JSON text, because Firestore does not allow arrays inside arrays. */
+function toProposalView(id: string, data: DocumentData): ProposalView {
+  return {
+    id,
+    summary: data.summary,
+    operations: storedOperations.parse(JSON.parse(data.operations)),
+    impact: JSON.parse(data.impact) as ProposalImpact,
+    status: data.status,
+  };
 }
+
+function proposalIdOf(metadata: unknown): string | null {
+  return metadata && typeof metadata === "object" && "proposalId" in metadata ? String((metadata as { proposalId: string }).proposalId) : null;
+}
+
+type ChatRecord = { id: string; role: string; content: string; metadata: unknown; createdAt: unknown };
+
+const toIso = (value: unknown) => (value as { toDate(): Date }).toDate().toISOString();
 
 export async function listChat(tripId: string, ownerId: string): Promise<ChatMessageView[]> {
   await requireOwnedTrip(tripId, ownerId);
-  const messages = await db.chatMessage.findMany({ where: { tripId }, orderBy: { createdAt: "asc" }, take: 200 });
-  const proposalIds = messages.flatMap((m) => (m.metadata && typeof m.metadata === "object" && "proposalId" in m.metadata ? [String((m.metadata as { proposalId: string }).proposalId)] : []));
-  const proposals = proposalIds.length ? await db.tripProposal.findMany({ where: { id: { in: proposalIds } } }) : [];
+  const messageSnaps = await messagesRef(tripId).orderBy("createdAt", "asc").limit(200).get();
+  const messages = messageSnaps.docs.map((snap): ChatRecord => ({ id: snap.id, ...(snap.data() as Omit<ChatRecord, "id">) }));
+  const proposalIds = [...new Set(messages.flatMap((m) => (proposalIdOf(m.metadata) ? [proposalIdOf(m.metadata)!] : [])))];
+  const proposalSnaps = proposalIds.length ? await getDb().getAll(...proposalIds.map((id) => proposalsRef(tripId).doc(id))) : [];
+  const proposals = new Map(proposalSnaps.filter((snap) => snap.exists).map((snap) => [snap.id, toProposalView(snap.id, snap.data()!)]));
   return messages.map((message) => {
-    const proposalId = message.metadata && typeof message.metadata === "object" && "proposalId" in message.metadata ? String((message.metadata as { proposalId: string }).proposalId) : null;
-    const proposal = proposalId ? proposals.find((p) => p.id === proposalId) : undefined;
-    return { id: message.id, role: message.role, content: message.content, proposal: proposal ? toProposalView(proposal) : null, createdAt: message.createdAt.toISOString() };
+    const proposalId = proposalIdOf(message.metadata);
+    return { id: message.id, role: message.role, content: message.content, proposal: proposalId ? (proposals.get(proposalId) ?? null) : null, createdAt: toIso(message.createdAt) };
   });
+}
+
+async function addMessage(tripId: string, role: string, content: string, metadata: { proposalId: string } | null = null) {
+  await messagesRef(tripId).add({ role, content, metadata, createdAt: new Date() });
 }
 
 /** Handles one user message: records it, plans a reply, and stores any proposed change for the user to accept. */
@@ -40,50 +64,58 @@ export async function handleChatMessage(input: { tripId: string; ownerId: string
   await requireOwnedTrip(input.tripId, input.ownerId);
   const services = getServices();
   const view = await getTripView(input.tripId, input.ownerId, services);
-  const recent = await db.chatMessage.findMany({ where: { tripId: input.tripId }, orderBy: { createdAt: "desc" }, take: 6 });
-  const plan = await planTripChange(view, input.message, recent.reverse(), services);
+  const recentSnaps = await messagesRef(input.tripId).orderBy("createdAt", "desc").limit(6).get();
+  const recent = recentSnaps.docs.map((snap) => snap.data() as { role: string; content: string }).reverse();
+  const plan = await planTripChange(view, input.message, recent, services);
 
-  await db.chatMessage.create({ data: { tripId: input.tripId, role: "user", content: input.message } });
+  await addMessage(input.tripId, "user", input.message);
   let proposalId: string | null = null;
   const shapeProblem = checkProposalShape(plan.summary, plan.operations);
   if (shapeProblem) {
-    await db.chatMessage.create({ data: { tripId: input.tripId, role: "assistant", content: shapeProblem } });
+    await addMessage(input.tripId, "assistant", shapeProblem);
     return listChat(input.tripId, input.ownerId);
   }
   if (plan.operations.length) {
     const impact = await simulateImpact(view, plan.operations, services);
-    const proposal = await db.tripProposal.create({
-      data: { tripId: input.tripId, summary: plan.summary, operations: plan.operations as unknown as Prisma.InputJsonValue, impact: impact as unknown as Prisma.InputJsonValue },
+    const proposal = await proposalsRef(input.tripId).add({
+      summary: plan.summary,
+      operations: JSON.stringify(plan.operations),
+      impact: JSON.stringify(impact),
+      status: "pending",
+      createdAt: new Date(),
     });
     proposalId = proposal.id;
   }
-  await db.chatMessage.create({
-    data: { tripId: input.tripId, role: "assistant", content: plan.reply, metadata: proposalId ? { proposalId } : undefined },
-  });
+  await addMessage(input.tripId, "assistant", plan.reply, proposalId ? { proposalId } : null);
   return listChat(input.tripId, input.ownerId);
 }
 
 export async function acceptProposal(input: { tripId: string; ownerId: string; proposalId: string; confirmRequired: boolean }) {
   const trip = await requireOwnedTrip(input.tripId, input.ownerId);
-  const proposal = await db.tripProposal.findFirst({ where: { id: input.proposalId, tripId: input.tripId } });
-  if (!proposal) throw new AppError(404, "proposal_not_found", "That suggestion no longer exists.");
+  const snap = await proposalsRef(input.tripId).doc(input.proposalId).get();
+  if (!snap.exists) throw new AppError(404, "proposal_not_found", "That suggestion no longer exists.");
+  const proposal = snap.data()!;
   if (proposal.status !== "pending") throw new AppError(409, "proposal_closed", `This suggestion was already ${proposal.status}.`);
-  const impact = proposal.impact as unknown as ProposalImpact;
+  const impact = JSON.parse(proposal.impact) as ProposalImpact;
   assertProposalNotStale(impact.baseVersion, trip.version);
   if (impact.requiresConfirmation && !input.confirmRequired) {
     throw new AppError(409, "confirmation_required", "This suggestion removes a required stop. Confirm to apply it.");
   }
 
-  const operations = storedOperations.parse(proposal.operations).map((op) => (op.type === "remove_stop" ? { ...op, confirmRequired: input.confirmRequired } : op));
-  // applyTripChange checks the version atomically, so a double-click cannot apply the change twice.
+  const operations = storedOperations.parse(JSON.parse(proposal.operations)).map((op) => (op.type === "remove_stop" ? { ...op, confirmRequired: input.confirmRequired } : op));
+  // applyTripChange checks the version inside a transaction, so a double-click cannot apply the change twice.
   await applyTripChange({ tripId: input.tripId, ownerId: input.ownerId, expectedVersion: impact.baseVersion, operations, summary: proposal.summary });
-  await db.tripProposal.update({ where: { id: proposal.id }, data: { status: "accepted" } });
-  await db.chatMessage.create({ data: { tripId: input.tripId, role: "system", content: `Applied: ${proposal.summary}.` } });
+  await proposalsRef(input.tripId).doc(input.proposalId).update({ status: "accepted" });
+  await addMessage(input.tripId, "system", `Applied: ${proposal.summary}.`);
   return getTripView(input.tripId, input.ownerId);
 }
 
 export async function rejectProposal(input: { tripId: string; ownerId: string; proposalId: string }) {
   await requireOwnedTrip(input.tripId, input.ownerId);
-  const updated = await db.tripProposal.updateMany({ where: { id: input.proposalId, tripId: input.tripId, status: "pending" }, data: { status: "rejected" } });
-  if (updated.count === 0) throw new AppError(409, "proposal_closed", "This suggestion is no longer pending.");
+  const ref = proposalsRef(input.tripId).doc(input.proposalId);
+  await getDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || snap.data()!.status !== "pending") throw new AppError(409, "proposal_closed", "This suggestion is no longer pending.");
+    tx.update(ref, { status: "rejected" });
+  });
 }

@@ -13,7 +13,7 @@ export default async function HomePage() {
   return (
     <main className="min-h-screen bg-slate-50">
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
-        <h1 className="text-xl font-semibold text-slate-900">RoadTrip AI</h1>
+        <h1 className="text-xl font-semibold text-slate-900">My Road Trip Planner</h1>
         <div className="flex items-center gap-4 text-sm text-slate-600">
           <span className="hidden sm:inline">{user.email}</span>
           <SignOutButton />
