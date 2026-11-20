@@ -23,7 +23,7 @@ function rememberSearch(key: string, data: SearchResponse) {
  * Debounced place autocomplete. The user must pick a result, so the app never guesses a
  * location from free text. A typed-but-unpicked value is shown as unresolved.
  */
-export function PlaceSearch({ label, onChoose, initial }: { label: string; onChoose: (place: ChosenPlace | null) => void; initial?: string }) {
+export function PlaceSearch({ label, onChoose, initial, dark = false }: { label: string; onChoose: (place: ChosenPlace | null) => void; initial?: string; dark?: boolean }) {
   const inputId = useId();
   const [query, setQuery] = useState(initial ?? "");
   const [results, setResults] = useState<ChosenPlace[]>([]);
@@ -66,7 +66,7 @@ export function PlaceSearch({ label, onChoose, initial }: { label: string; onCho
 
   return (
     <div className="relative">
-      <label htmlFor={inputId} className="block text-sm font-medium text-slate-700">
+      <label htmlFor={inputId} className={`block text-sm font-medium ${dark ? "text-white" : "text-slate-700"}`}>
         {label}
       </label>
       <input
@@ -81,7 +81,7 @@ export function PlaceSearch({ label, onChoose, initial }: { label: string; onCho
         className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
         aria-describedby={`${inputId}-hint`}
       />
-      <p id={`${inputId}-hint`} className="mt-1 text-xs text-slate-500">
+      <p id={`${inputId}-hint`} className={`mt-1 text-xs ${dark ? "text-white/80" : "text-slate-500"}`}>
         {chosen ? `Selected: ${chosen.label}` : status === "loading" ? "Searching..." : status === "error" ? `Place search is unavailable: ${errorText}` : "Pick a result from the list. Unselected text is not used."}
         {mode === "demo" && results.length > 0 && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">DEMO DATA</span>}
       </p>

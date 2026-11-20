@@ -45,10 +45,10 @@ export function NewTripForm() {
 
   return (
     <form onSubmit={submit} className="mt-4 space-y-4">
-      <PlaceSearch label="Start" onChoose={setOrigin} />
-      <PlaceSearch label="Destination" onChoose={setDestination} />
-      <fieldset className="text-sm">
-        <legend className="mb-1 font-medium text-slate-700">Trip type</legend>
+      <PlaceSearch label="Start" onChoose={setOrigin} dark />
+      <PlaceSearch label="Destination" onChoose={setDestination} dark />
+      <fieldset className="text-sm text-white">
+        <legend className="mb-1 font-medium text-white">Trip type</legend>
         <div className="flex gap-4">
           <label className="flex items-center gap-1.5">
             <input type="radio" name="trip-type" checked={tripType === "oneWay"} onChange={() => setTripType("oneWay")} /> One way
@@ -57,18 +57,18 @@ export function NewTripForm() {
             <input type="radio" name="trip-type" checked={tripType === "roundTrip"} onChange={() => setTripType("roundTrip")} /> Round trip
           </label>
         </div>
-        {tripType === "roundTrip" && <p className="mt-1 text-xs text-slate-500">The route returns to the start point at the end.</p>}
+        {tripType === "roundTrip" && <p className="mt-1 text-xs text-white/80">The route returns to the start point at the end.</p>}
       </fieldset>
-      <label className="block text-sm font-medium text-slate-700">
+      <label className="block text-sm font-medium text-white">
         Trip name (optional)
         <input name="name" maxLength={120} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
       </label>
       <div className="grid grid-cols-2 gap-3">
-        <label className="block text-sm font-medium text-slate-700">
+        <label className="block text-sm font-medium text-white">
           Start date
-          <input name="startDate" type="date" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+          <input name="startDate" type="date" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 [&::-webkit-calendar-picker-indicator]:invert" />
         </label>
-        <label className="block text-sm font-medium text-slate-700">
+        <label className="block text-sm font-medium text-white">
           Days
           <input name="durationDays" type="number" min={1} max={60} placeholder="e.g. 7" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
         </label>

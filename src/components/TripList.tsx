@@ -50,7 +50,7 @@ export function TripList({ trips }: { trips: TripListItem[] }) {
 
   return (
     <div className="mt-3">
-      <div className="mb-3 flex flex-wrap items-center gap-3 text-sm text-slate-700">
+      <div className="mb-3 flex flex-wrap items-center gap-3 text-sm text-white">
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -73,7 +73,7 @@ export function TripList({ trips }: { trips: TripListItem[] }) {
           {busy ? "Deleting..." : `Delete selected (${selected.size})`}
         </button>
       </div>
-      {message && <p role="status" className="mb-3 text-xs text-slate-600">{message}</p>}
+      {message && <p role="status" className="mb-3 text-xs text-white">{message}</p>}
       <ul className="space-y-3">
         {trips.map((trip) => (
           <li key={trip.id} className="flex items-start gap-3">
