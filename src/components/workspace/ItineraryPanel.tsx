@@ -6,8 +6,6 @@ import type { Hotel, TripOperation } from "@/domain/trip";
 import type { ItineraryDay } from "@/domain/itinerary";
 import { formatDistance, formatDuration } from "@/lib/format";
 import { PlaceSearch, type ChosenPlace } from "../PlaceSearch";
-import { ImportStops } from "./ImportStops";
-import type { ImportCommitRow } from "./useTrip";
 import { filterHotels, locateAddress, type HotelSearch, type PendingHotel } from "./hotelSearch";
 import type { HotelCandidate } from "@/services/types";
 
@@ -16,7 +14,6 @@ type Props = {
   selectedStopId: string | null;
   onSelectStop: (id: string) => void;
   apply: (operations: TripOperation[], summary: string) => Promise<boolean>;
-  commitImport: (rows: ImportCommitRow[]) => Promise<boolean>;
   confirmRemove: (stopName: string) => boolean;
   retryRoutes: () => Promise<void>;
   hotelSearch: HotelSearch | null;
@@ -38,7 +35,7 @@ const TYPE_BADGE: Record<string, string> = {
 };
 const TYPE_TEXT: Record<string, string> = { origin: "Start", destination: "Destination", required: "Required", optional: "Optional", return: "Return to start" };
 
-export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, commitImport, confirmRemove, retryRoutes, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel, pick }: Props) {
+export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, confirmRemove, retryRoutes, hotelSearch, onSearchHotels, onPickHotel, onFilterHotels, onPendingHotel, pick }: Props) {
   const [chosen, setChosen] = useState<ChosenPlace | null>(null);
   const [retrying, setRetrying] = useState(false);
   const roundTrip = trip.stops.some((stop) => stop.stopType === "return");
@@ -46,7 +43,6 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
   const [addLeg, setAddLeg] = useState<"outbound" | "return">("outbound");
   const [addOvernight, setAddOvernight] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [expandedDays, setExpandedDays] = useState<Set<number>>(() => new Set());
   const [revealedStop, setRevealedStop] = useState<string | null>(null);
   // Selecting a stop on the map opens the first day that holds it, so its editor is visible.
@@ -85,6 +81,17 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
     setExpandedDays((prev) => (prev.has(dayNumber) ? new Set() : new Set([dayNumber])));
   }
 
+  /** Removes every stop between the endpoints, and the return if the trip is round trip. Origin and destination stay. */
+  async function startOver() {
+    const middle = trip.stops.filter((stop) => stop.stopType === "required" || stop.stopType === "optional");
+    if (middle.length === 0 && !roundTrip) return;
+    const message = `Remove all ${middle.length} stop${middle.length === 1 ? "" : "s"} between your start and destination${roundTrip ? " and turn off round trip" : ""}? You can undo this with Undo last change.`;
+    if (!window.confirm(message)) return;
+    const removals = middle.map((stop) => ({ type: "remove_stop" as const, stopId: stop.id, confirmRequired: true }));
+    const operations = roundTrip ? [...removals, { type: "set_round_trip" as const, enabled: false }] : removals;
+    await apply(operations, "Started over: kept only start and destination");
+  }
+
   async function remove(stopId: string) {
     const stop = stopsById.get(stopId);
     if (!stop) return;
@@ -96,19 +103,18 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, comm
   return (
     <div className="flex h-full flex-col">
       <div className="space-y-3 border-b border-slate-200 p-4">
-        {importing ? (
-          <ImportStops tripId={trip.id} commit={commitImport} onClose={() => setImporting(false)} />
-        ) : (
-          <button type="button" onClick={() => setImporting(true)} className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
-            Import a stop list (CSV or XLSX)
-          </button>
-        )}
+        <button type="button" onClick={startOver} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" />
+          </svg>
+          Start over (keep start and destination only)
+        </button>
         <button
           type="button"
           onClick={() => apply([{ type: "set_round_trip", enabled: !roundTrip }], roundTrip ? "Changed to one way" : "Changed to round trip")}
           className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
         >
-          {roundTrip ? "Trip is round trip. Make it one way" : "Trip is one way. Make it round trip"}
+          {roundTrip ? "This is a round trip. Make it one way." : "This is a one-way trip. Make it round trip."}
         </button>
         <h2 className="text-base font-semibold text-slate-900">Add a stop</h2>
         <PlaceSearch label="Search a place" onChoose={setChosen} />

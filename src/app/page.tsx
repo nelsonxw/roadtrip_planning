@@ -19,7 +19,14 @@ export default async function HomePage() {
       <div className="fixed inset-0 -z-10 bg-[url('/images/road-trip-glacier.jpg')] bg-cover bg-center" aria-hidden="true" />
       <div className="fixed inset-0 -z-10 bg-gradient-to-b from-slate-950/90 via-slate-900/65 to-transparent" aria-hidden="true" />
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
-        <h1 className="text-xl font-semibold text-slate-900">My Road Trip Planner</h1>
+        <h1 className="flex items-center gap-2 font-semibold text-slate-900">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500 text-white shadow-sm" aria-hidden="true">
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 21s-7-6.2-7-11.5A7 7 0 0119 9.5C19 14.8 12 21 12 21z" />
+            </svg>
+          </span>
+          My Road Trip Planner
+        </h1>
         <div className="flex items-center gap-4 text-sm text-slate-600">
           <span className="hidden sm:inline">{user.email}</span>
           <SignOutButton />

@@ -472,7 +472,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" role="region" aria-label="Trip map" />
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg bg-white/95 p-2 text-[11px] text-slate-700 shadow">
+      <div className="absolute bottom-3 left-3 origin-bottom-left rounded-lg bg-white/95 p-2 text-[11px] text-slate-700 shadow transition-transform duration-200 ease-out hover:z-10 hover:scale-[1.6] motion-reduce:transition-none motion-reduce:hover:scale-100">
         <p className="font-semibold">Legend</p>
         <p>■ Start · ◆ Destination · ● Required · ○ Optional</p>
         <p>● Overnight suggestion</p>

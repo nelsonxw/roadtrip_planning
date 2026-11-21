@@ -9,7 +9,6 @@ import { api, ApiError, post } from "@/lib/clientApi";
 export type SaveStatus = "loading" | "saved" | "saving" | "error";
 
 type Payload = { trip?: TripView; messages?: ChatMessageView[] };
-export type ImportCommitRow = { name: string; address: string; latitude: number; longitude: number; stopType: "required" | "optional"; notes: string };
 
 /**
  * Owns the trip on the client. Every change is sent with the version it was based on, so the
@@ -108,10 +107,5 @@ export function useTrip(tripId: string) {
     [mutate, tripId],
   );
 
-  const commitImport = useCallback(
-    (rows: ImportCommitRow[]) => mutate((expectedVersion) => post<TripView>(`/api/trips/${tripId}/import/commit`, { expectedVersion, rows }).then((t) => ({ trip: t }))),
-    [mutate, tripId],
-  );
-
-  return { trip, messages, status, error, setError, reload, applyOperations, sendMessage, decideProposal, undo, updateDetails, commitImport, tripId };
+  return { trip, messages, status, error, setError, reload, applyOperations, sendMessage, decideProposal, undo, updateDetails, tripId };
 }

@@ -108,7 +108,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
     setAskingPopular(true);
     setPopularError(null);
     try {
-      setPopular(await api<PopularPlacesResult>(`/api/trips/${tripId}/popular-places?includeEndpoints=${includeEndpoints}`));
+      setPopular(await api<PopularPlacesResult>(`/api/trips/${tripId}/popular-places?includeEndpoints=${includeEndpoints}&fresh=true`));
     } catch (err) {
       setPopularError(err instanceof Error ? err.message : "Popular places are unavailable right now.");
     } finally {
@@ -182,7 +182,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
         className="flex min-h-0 flex-1"
         style={{ "--left-width": `${leftWidth}px`, "--right-width": `${rightWidth}px` } as CSSProperties}
       >
-        <aside className={`${mobileTab === "trip" ? "flex" : "hidden"} w-full flex-col border-r border-slate-200 bg-white md:flex md:w-[var(--left-width)] md:shrink-0`} aria-label="Itinerary and places">
+        <aside className={`${mobileTab === "trip" ? "flex" : "hidden"} w-full flex-col overflow-y-auto border-r border-slate-200 bg-white md:flex md:w-[var(--left-width)] md:shrink-0`} aria-label="Itinerary and places">
           <div role="tablist" aria-label="Itinerary or places" className="flex border-b border-slate-200 text-sm">
             {(["itinerary", "places"] as SidePanel[]).map((panel) => (
               <button key={panel} role="tab" aria-selected={sidePanel === panel} type="button" onClick={() => setSidePanel(panel)} className={`flex-1 py-2 font-medium capitalize ${sidePanel === panel ? "border-b-2 border-sky-600 text-sky-700" : "text-slate-600"}`}>
@@ -201,7 +201,6 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
                 selectedStopId={selectedStopId}
                 onSelectStop={selectStop}
                 apply={applyAndSelect}
-                commitImport={trip.commitImport}
                 confirmRemove={(name) => window.confirm(`"${name}" is a required stop. Remove it from the trip?`)}
                 retryRoutes={() => trip.reload().catch(() => undefined)}
                 hotelSearch={hotelSearch}

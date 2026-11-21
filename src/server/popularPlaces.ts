@@ -184,12 +184,13 @@ export async function verifySuggestion(
 }
 
 /** Asks the model for popular places, then keeps only the ones Wikidata confirms within 50 miles. */
-export async function findPopularPlaces(view: TripView, services: Services, includeEndpoints: boolean, userAgent = WIKIDATA_USER_AGENT): Promise<PopularPlacesResult> {
+/** `fresh` skips the saved result and asks the model again. The new result is still saved for later reloads. */
+export async function findPopularPlaces(view: TripView, services: Services, includeEndpoints: boolean, fresh = false, userAgent = WIKIDATA_USER_AGENT): Promise<PopularPlacesResult> {
   if (!services.assistantConfig) return { status: "unavailable", places: [], note: "Popular place suggestions need a Gemini key (GEMINI_API_KEY)." };
   if (view.routeGeometry.length < 2) return { status: "ok", places: [], note: "Calculate a route before asking for popular places." };
 
   const key = JSON.stringify({ id: view.id, stops: view.stops.map((stop) => [stop.id, stop.latitude, stop.longitude]), route: view.routeGeometry.length, includeEndpoints });
-  const cached = cache.get(key);
+  const cached = fresh ? undefined : cache.get(key);
   if (cached) return cached;
 
   const { apiKey, model } = services.assistantConfig;

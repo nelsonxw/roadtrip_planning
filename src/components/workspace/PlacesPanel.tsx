@@ -12,6 +12,13 @@ type Props = {
   onAskPopular: (includeEndpoints: boolean) => void;
 };
 
+/** The chosen option is dark green; the other option fades to a light tint once a choice is made. */
+function choiceStyle(selected: boolean, anyChosen: boolean) {
+  if (selected) return "bg-emerald-700 text-white shadow hover:bg-emerald-800";
+  if (anyChosen) return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100";
+  return "bg-violet-600 text-white hover:bg-violet-700";
+}
+
 /** Numbers match the diamonds on the map, so a suggestion can be found from either place. */
 export function PlacesPanel({ trip, popular, askingPopular, popularError, onAskPopular }: Props) {
   const [lastChoice, setLastChoice] = useState<boolean | null>(null);
@@ -27,10 +34,10 @@ export function PlacesPanel({ trip, popular, askingPopular, popularError, onAskP
       <div className="space-y-2 border-b border-slate-200 p-4">
         <p className="text-sm font-medium text-slate-800">Include places near your start (and return) point?</p>
         <div className="grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => ask(false)} disabled={disabled} className="rounded-lg border border-violet-300 px-3 py-2 text-sm font-medium text-violet-800 hover:bg-violet-50 disabled:opacity-50">
+          <button type="button" onClick={() => ask(false)} disabled={disabled} aria-pressed={lastChoice === false} className={`rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50 ${choiceStyle(lastChoice === false, lastChoice !== null)}`}>
             No, skip within 50 mi
           </button>
-          <button type="button" onClick={() => ask(true)} disabled={disabled} className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50">
+          <button type="button" onClick={() => ask(true)} disabled={disabled} aria-pressed={lastChoice === true} className={`rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50 ${choiceStyle(lastChoice === true, lastChoice !== null)}`}>
             Yes, include them
           </button>
         </div>

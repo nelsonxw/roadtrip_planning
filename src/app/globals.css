@@ -33,6 +33,11 @@
   animation: route-bob 1.6s ease-in-out infinite;
 }
 
+/* The trip page is one screen tall, so content below it would show the body's white. Match the page color there. */
+body:has(.trip-workspace) {
+  background-color: #e0f2fe;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

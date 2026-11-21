@@ -86,7 +86,7 @@ export function PlaceSearch({ label, onChoose, initial, dark = false }: { label:
         {mode === "demo" && results.length > 0 && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">DEMO DATA</span>}
       </p>
       {results.length > 0 && !chosen && query.trim().length >= 2 && (
-        <ul role="listbox" aria-label={`${label} results`} className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+        <ul role="listbox" aria-label={`${label} results`} className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white text-slate-900 shadow-lg">
           {results.map((place) => (
             <li key={`${place.latitude},${place.longitude},${place.label}`}>
               <button
