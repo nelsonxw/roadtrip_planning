@@ -13,6 +13,7 @@ const envSchema = z.object({
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
   FIREBASE_PROJECT_ID: optionalString,
   GOOGLE_APPLICATION_CREDENTIALS: optionalString,
+  FIREBASE_SERVICE_ACCOUNT_JSON: optionalString,
 });
 
 export const env = envSchema.parse(process.env);
