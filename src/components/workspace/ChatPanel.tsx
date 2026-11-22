@@ -71,15 +71,15 @@ export function ChatPanel({ messages, busy, send, decide }: Props) {
       <div className="border-t border-slate-200 p-3">
         <div className="mb-2 flex flex-wrap gap-1.5">
           {SUGGESTIONS.map((s) => (
-            <button key={s} type="button" onClick={() => setDraft(s)} className="rounded-full border border-slate-300 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">
+            <button key={s} type="button" onClick={() => setDraft(s)} className="rounded-full border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 md:px-2.5 md:py-1 md:text-xs">
               {s}
             </button>
           ))}
         </div>
         <form onSubmit={submit} className="flex gap-2">
           <label htmlFor="chat-input" className="sr-only">Message the trip assistant</label>
-          <input id="chat-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={1000} placeholder="e.g. add Santa Fe" className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-          <button type="submit" disabled={busy || waitingSeconds !== null || !draft.trim()} className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
+          <input id="chat-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={1000} placeholder="e.g. add Santa Fe" className="flex-1 rounded-lg border border-slate-300 px-3 py-2.5 text-base md:py-2 md:text-sm" />
+          <button type="submit" disabled={busy || waitingSeconds !== null || !draft.trim()} className="rounded-lg bg-sky-600 px-3 py-2.5 text-sm font-medium text-white disabled:opacity-50 md:py-2">
             Send
           </button>
         </form>

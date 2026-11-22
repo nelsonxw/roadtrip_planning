@@ -82,10 +82,10 @@ export function OvernightSuggestions({
                 </span>
               </span>
               <span className="flex shrink-0 gap-1">
-                <button type="button" disabled={busyId !== null} onClick={() => accept(item)} className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white disabled:opacity-50">
+                <button type="button" disabled={busyId !== null} onClick={() => accept(item)} className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 md:px-2 md:py-1 md:text-xs">
                   {busyId === item.settlement.id ? "Adding..." : "Add"}
                 </button>
-                <button type="button" onClick={() => onDismiss(item.settlement.id)} className="rounded border border-slate-300 px-2 py-1 text-xs">
+                <button type="button" onClick={() => onDismiss(item.settlement.id)} className="rounded border border-slate-300 px-3 py-2 text-sm md:px-2 md:py-1 md:text-xs">
                   Dismiss
                 </button>
               </span>

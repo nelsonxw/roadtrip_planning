@@ -136,7 +136,7 @@ export default async function LoginPage() {
           <ExampleItinerary />
         </section>
 
-        <section aria-label="Sign in or create an account" className="w-full max-w-sm justify-self-center rounded-2xl bg-white p-8 shadow-2xl lg:w-96 lg:justify-self-end">
+        <section aria-label="Sign in or create an account" className="order-first w-full max-w-sm justify-self-center rounded-2xl bg-white p-8 shadow-2xl lg:order-none lg:w-96 lg:justify-self-end">
           <h2 className="text-xl font-semibold text-slate-900">Get started</h2>
           <p className="mt-1 text-sm text-slate-600">Sign in to your trips, or create an account.</p>
           <AuthForm />

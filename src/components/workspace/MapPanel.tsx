@@ -104,6 +104,7 @@ export function MapPanel({ trip, overnightSuggestions, suggestedStops, previewGe
   const markersRef = useRef(new Map<string, { marker: Marker; el: HTMLButtonElement }>());
   const popupRef = useRef<Popup | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(false);
   // Without WebGL the map cannot render. Stops, itinerary and chat still work, so the page shows a message instead of failing.
   const [webgl] = useState(supportsWebGL);
   const fitKey = useRef<string>("");
@@ -508,7 +509,21 @@ export function MapPanel({ trip, overnightSuggestions, suggestedStops, previewGe
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" role="region" aria-label="Trip map" />
-      <div className="absolute bottom-3 left-3 origin-bottom-left rounded-lg bg-white/95 p-2 text-[11px] text-slate-700 shadow transition-transform duration-200 ease-out hover:z-10 hover:scale-[1.6] motion-reduce:transition-none motion-reduce:hover:scale-100">
+      {/* On phones the legend opens from a button, so it does not cover the small map. Desktop always shows it and enlarges it on hover. */}
+      <button
+        type="button"
+        aria-expanded={legendOpen}
+        onClick={() => setLegendOpen(!legendOpen)}
+        className={`absolute bottom-16 left-3 rounded-lg bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow md:bottom-3 md:hidden ${legendOpen ? "hidden" : ""}`}
+      >
+        Map legend
+      </button>
+      <div
+        className={`absolute bottom-16 left-3 origin-bottom-left max-w-[70vw] rounded-lg md:bottom-3 bg-white/95 p-2 text-[11px] text-slate-700 shadow transition-transform duration-200 ease-out hover:z-10 hover:scale-[1.6] motion-reduce:transition-none motion-reduce:hover:scale-100 md:block md:max-w-none ${legendOpen ? "block" : "hidden"}`}
+      >
+        <button type="button" onClick={() => setLegendOpen(false)} className="float-right ml-2 px-1 text-sm text-slate-500 md:hidden" aria-label="Close legend">
+          ×
+        </button>
         <p className="font-semibold">Legend</p>
         <p>■ Start · ◆ Destination · ● Required · ○ Optional</p>
         <p>● Overnight suggestion</p>

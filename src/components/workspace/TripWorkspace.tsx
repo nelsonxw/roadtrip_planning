@@ -164,9 +164,9 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 bg-white px-4 py-3">
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-lg font-semibold text-slate-900">{current.name}</h1>
+          <h1 className="text-lg font-semibold text-slate-900 md:truncate">{current.name}</h1>
           <p className="text-xs text-slate-600">
             {current.itinerary.days.length} day(s) · {current.stops.length} stops · route provider: {trip.trip.modes.routing === "demo" ? "demo estimate" : "OpenRouteService"}
           </p>
@@ -174,9 +174,11 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
         <span role="status" aria-live="polite" className={`rounded-full px-2.5 py-1 text-xs font-medium ${trip.status === "error" ? "bg-rose-100 text-rose-800" : trip.status === "saving" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-800"}`}>
           {STATUS_TEXT[trip.status]}
         </span>
-        <button type="button" disabled={busy} onClick={() => trip.undo().catch(() => undefined)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-50">Undo last change</button>
-        <a href={`/api/trips/${tripId}/export/csv`} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">Export CSV</a>
-        <a href={`/api/trips/${tripId}/export/pdf`} className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-700">Export PDF</a>
+        <div className="flex w-full gap-2 overflow-x-auto md:w-auto md:overflow-visible">
+          <button type="button" disabled={busy} onClick={() => trip.undo().catch(() => undefined)} className="shrink-0 whitespace-nowrap rounded-lg border border-slate-300 px-3 py-2.5 text-sm disabled:opacity-50 md:py-1.5">Undo last change</button>
+          <a href={`/api/trips/${tripId}/export/csv`} className="shrink-0 whitespace-nowrap rounded-lg border border-slate-300 px-3 py-2.5 text-sm hover:bg-slate-50 md:py-1.5">Export CSV</a>
+          <a href={`/api/trips/${tripId}/export/pdf`} className="shrink-0 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2.5 text-sm text-white hover:bg-slate-700 md:py-1.5">Export PDF</a>
+        </div>
       </header>
 
       {trip.error && (
@@ -188,7 +190,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
 
       <nav aria-label="Workspace sections" className="flex border-b border-slate-200 bg-white md:hidden">
         {(["map", "trip", "chat"] as MobileTab[]).map((tab) => (
-          <button key={tab} type="button" aria-pressed={mobileTab === tab} onClick={() => setMobileTab(tab)} className={`flex-1 py-2 text-sm font-medium capitalize ${mobileTab === tab ? "border-b-2 border-sky-600 text-sky-700" : "text-slate-600"}`}>
+          <button key={tab} type="button" aria-pressed={mobileTab === tab} onClick={() => setMobileTab(tab)} className={`flex-1 py-3 text-sm font-medium capitalize ${mobileTab === tab ? "border-b-2 border-sky-600 text-sky-700" : "text-slate-600"}`}>
             {tab === "trip" ? "Itinerary" : tab}
           </button>
         ))}
@@ -201,7 +203,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
         <aside className={`${mobileTab === "trip" ? "flex" : "hidden"} w-full flex-col overflow-y-auto border-r border-slate-200 bg-white md:flex md:w-[var(--left-width)] md:shrink-0`} aria-label="Itinerary and places">
           <div role="tablist" aria-label="Itinerary or places" className="flex border-b border-slate-200 text-sm">
             {(["itinerary", "places"] as SidePanel[]).map((panel) => (
-              <button key={panel} role="tab" aria-selected={sidePanel === panel} type="button" onClick={() => setSidePanel(panel)} className={`flex-1 py-2 font-medium capitalize ${sidePanel === panel ? "border-b-2 border-sky-600 text-sky-700" : "text-slate-600"}`}>
+              <button key={panel} role="tab" aria-selected={sidePanel === panel} type="button" onClick={() => setSidePanel(panel)} className={`flex-1 py-3 font-medium capitalize md:py-2 ${sidePanel === panel ? "border-b-2 border-sky-600 text-sky-700" : "text-slate-600"}`}>
                 {panel}
               </button>
             ))}

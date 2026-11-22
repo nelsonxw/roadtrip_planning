@@ -100,7 +100,7 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, conf
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-col">
       <div className="space-y-3 border-b border-slate-200 p-4">
         <button type="button" onClick={startOver} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -144,7 +144,7 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, conf
         </button>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-4" aria-label="Day-by-day itinerary">
+      <div className="space-y-4 p-4" aria-label="Day-by-day itinerary">
         {trip.routeErrors.length > 0 && (
           <div role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">
             <p className="font-medium">Some routes could not be calculated. Your stops were saved.</p>
@@ -245,9 +245,9 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, conf
                       </button>
                       {movable && (
                         <div className="flex shrink-0 gap-1">
-                          <button type="button" aria-label={`Move ${stop.name} earlier`} disabled={position === 0} onClick={() => move(stop.id, position - 1)} className="rounded border px-2 py-0.5 text-sm disabled:opacity-30">↑</button>
-                          <button type="button" aria-label={`Move ${stop.name} later`} disabled={position === intermediate.length - 1} onClick={() => move(stop.id, position + 1)} className="rounded border px-2 py-0.5 text-sm disabled:opacity-30">↓</button>
-                          <button type="button" aria-label={`Remove ${stop.name}`} onClick={() => remove(stop.id)} className="rounded border border-rose-200 px-2 py-0.5 text-sm text-rose-700">✕</button>
+                          <button type="button" aria-label={`Move ${stop.name} earlier`} disabled={position === 0} onClick={() => move(stop.id, position - 1)} className="min-h-11 min-w-11 rounded border px-2 text-sm disabled:opacity-30 md:min-h-0 md:min-w-0 md:py-0.5">↑</button>
+                          <button type="button" aria-label={`Move ${stop.name} later`} disabled={position === intermediate.length - 1} onClick={() => move(stop.id, position + 1)} className="min-h-11 min-w-11 rounded border px-2 text-sm disabled:opacity-30 md:min-h-0 md:min-w-0 md:py-0.5">↓</button>
+                          <button type="button" aria-label={`Remove ${stop.name}`} onClick={() => remove(stop.id)} className="min-h-11 min-w-11 rounded border border-rose-200 px-2 text-sm text-rose-700 md:min-h-0 md:min-w-0 md:py-0.5">✕</button>
                         </div>
                       )}
                     </div>
