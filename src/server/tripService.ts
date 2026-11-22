@@ -3,6 +3,7 @@ import type { DocumentData } from "firebase-admin/firestore";
 import { buildItinerary, type DayTripLeg, type ItineraryResult, type LegMetrics } from "@/domain/itinerary";
 import { type LngLat } from "@/domain/geo";
 import { applyOperations, DEFAULT_PREFERENCES, makeReturnStop, renumber, sortStops, type DayTrip, type Hotel, type Stop, type TripOperation, type TripPreferences } from "@/domain/trip";
+import { TtlCache } from "@/lib/cache";
 import { AppError, ProviderError } from "@/lib/errors";
 import { getDb } from "@/lib/firestore";
 import { getServices, type Services } from "@/services/providers";
@@ -40,6 +41,8 @@ type TripRecord = {
   durationDays: number | null;
   preferences: unknown;
   version: number;
+  /** Kept on the trip so listing trips does not count each trip's stops. Missing on trips saved before this was added. */
+  stopCount: number | null;
   updatedAt: Date;
 };
 
@@ -66,6 +69,7 @@ function toTripRecord(id: string, data: DocumentData): TripRecord {
     durationDays: data.durationDays ?? null,
     preferences: data.preferences,
     version: data.version,
+    stopCount: typeof data.stopCount === "number" ? data.stopCount : null,
     updatedAt: toDate(data.updatedAt) ?? new Date(0),
   };
 }
@@ -116,6 +120,9 @@ function toPreferences(value: unknown): TripPreferences {
 }
 
 /** Route legs are cached by coordinates and routing options, so legs untouched by an edit are never recalculated. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+const memoryRouteCache = new TtlCache<RouteLeg>(DAY_MS, 500);
+
 function routeCacheKey(provider: string, from: LngLat, to: LngLat, preferences: TripPreferences) {
   const payload = JSON.stringify({ provider, pref: preferences.routePreference, avoid: [...preferences.avoid].sort(), from: from.map((n) => n.toFixed(5)), to: to.map((n) => n.toFixed(5)) });
   return createHash("sha256").update(payload).digest("hex");
@@ -123,19 +130,39 @@ function routeCacheKey(provider: string, from: LngLat, to: LngLat, preferences: 
 
 export async function getRouteLeg(from: LngLat, to: LngLat, preferences: TripPreferences, services = getServices()): Promise<RouteLeg> {
   const key = routeCacheKey(services.routing.provider, from, to, preferences);
+  const inMemory = memoryRouteCache.get(key);
+  if (inMemory) return inMemory;
+
   const cached = await routeCacheRef(key).get();
   if (cached.exists) {
     const data = cached.data()!;
-    return {
-      distanceMeters: data.distanceMeters,
-      durationSeconds: data.durationSeconds,
-      geometry: JSON.parse(data.geometry) as LngLat[],
-      provider: data.provider,
-      mode: services.routing.mode,
-    };
+    const expiresAt = data.expiresAt ? (data.expiresAt as { toDate?: () => Date }).toDate?.() : null;
+    if (expiresAt && expiresAt < new Date()) {
+      await routeCacheRef(key).delete().catch(() => undefined);
+    } else {
+      const leg: RouteLeg = {
+        distanceMeters: data.distanceMeters,
+        durationSeconds: data.durationSeconds,
+        geometry: JSON.parse(data.geometry) as LngLat[],
+        provider: data.provider,
+        mode: services.routing.mode,
+      };
+      memoryRouteCache.set(key, leg);
+      return leg;
+    }
   }
   const leg = await services.routing.route(from, to, { preference: preferences.routePreference, avoid: preferences.avoid });
-  await routeCacheRef(key).set({ provider: leg.provider, distanceMeters: leg.distanceMeters, durationSeconds: leg.durationSeconds, geometry: JSON.stringify(leg.geometry), createdAt: new Date() });
+  memoryRouteCache.set(key, leg);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 90 * DAY_MS);
+  await routeCacheRef(key).set({
+    provider: leg.provider,
+    distanceMeters: leg.distanceMeters,
+    durationSeconds: leg.durationSeconds,
+    geometry: JSON.stringify(leg.geometry),
+    createdAt: now,
+    expiresAt,
+  });
   return leg;
 }
 
@@ -204,7 +231,7 @@ export async function listTripsForOwner(ownerId: string) {
   const trips = await Promise.all(
     snaps.docs.map(async (snap) => {
       const record = toTripRecord(snap.id, snap.data());
-      const stopCount = (await stopsRef(record.id).count().get()).data().count;
+      const stopCount = record.stopCount ?? (await stopsRef(record.id).count().get()).data().count;
       return { id: record.id, name: record.name, startDate: toDateOnly(record.startDate), durationDays: record.durationDays, stopCount, updatedAt: record.updatedAt };
     }),
   );
@@ -244,6 +271,7 @@ export async function createTrip(ownerId: string, input: { name: string; notes?:
     durationDays: input.durationDays ?? null,
     preferences: DEFAULT_PREFERENCES,
     version: 1,
+    stopCount: allStops.length,
     createdAt: now,
     updatedAt: now,
   });
@@ -254,8 +282,8 @@ export async function createTrip(ownerId: string, input: { name: string; notes?:
 }
 
 export async function getTripView(tripId: string, ownerId: string, services = getServices()): Promise<TripView> {
-  const trip = await loadOwnedTrip(tripId, ownerId);
-  const stopSnaps = await stopsRef(tripId).orderBy("sequence").get();
+  // The trip and its stops are independent reads, so fetch them together. Ownership is still enforced by loadOwnedTrip.
+  const [trip, stopSnaps] = await Promise.all([loadOwnedTrip(tripId, ownerId), stopsRef(tripId).orderBy("sequence").get()]);
   const preferences = toPreferences(trip.preferences);
   const stops = sortStops(stopSnaps.docs.map((snap) => toStop(snap.id, snap.data())));
   const { legs, errors } = await computeLegs(stops, preferences, services);
@@ -308,7 +336,7 @@ export async function applyTripChange(input: { tripId: string; ownerId: string; 
     for (const stop of result.stops) tx.set(stopsRef(input.tripId).doc(stop.id), toStopData(stop));
 
     const now = new Date();
-    tx.update(tripRef(input.tripId), { preferences: result.preferences, version: input.expectedVersion + 1, updatedAt: now });
+    tx.update(tripRef(input.tripId), { preferences: result.preferences, version: input.expectedVersion + 1, stopCount: result.stops.length, updatedAt: now });
     tx.set(revisionsRef(input.tripId).doc(revisionId(nextRevision)), revisionData(nextRevision, input.summary, { stops: result.stops, preferences: result.preferences }, now));
   });
 }
@@ -353,7 +381,7 @@ export async function undoLastChange(input: { tripId: string; ownerId: string; e
     for (const stop of undone) tx.set(stopsRef(input.tripId).doc(stop.id), toStopData(stop));
 
     const now = new Date();
-    const tripUpdate: Record<string, unknown> = { version: input.expectedVersion + 1, updatedAt: now };
+    const tripUpdate: Record<string, unknown> = { version: input.expectedVersion + 1, stopCount: undone.length, updatedAt: now };
     if (snapshot.preferences) tripUpdate.preferences = snapshot.preferences;
     tx.update(tripRef(input.tripId), tripUpdate);
     tx.set(revisionsRef(input.tripId).doc(revisionId(nextRevision)), revisionData(nextRevision, `Undid: ${latest.summary}`, { stops: undone, preferences: snapshot.preferences }, now));

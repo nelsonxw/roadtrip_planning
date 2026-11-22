@@ -7,7 +7,7 @@ export type ChosenPlace = { label: string; name: string; latitude: number; longi
 type SearchResponse = { results: ChosenPlace[]; mode: "live" | "demo" };
 
 /** Waits for a typing pause before searching, so each keystroke does not use a provider request. */
-const SEARCH_PAUSE_MS = 700;
+const SEARCH_PAUSE_MS = 350;
 const SEARCH_CACHE_SIZE = 100;
 const searchCache = new Map<string, SearchResponse>();
 

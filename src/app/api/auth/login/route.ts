@@ -11,7 +11,7 @@ export const POST = publicRoute(async (request) => {
   const user = await findUserByEmail(email);
   const valid = user ? await verifyPassword(password, user.passwordHash) : false;
   if (!user || !valid) throw new AppError(401, "invalid_credentials", "Email or password is incorrect.");
-  const session = await createSession(user.id);
+  const session = await createSession(user.id, user.email);
   await setSessionCookie(session.token, session.expiresAt);
   return json({ user: { id: user.id, email: user.email } });
 });

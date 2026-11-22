@@ -17,3 +17,13 @@ export async function removeTestUsers(userIds: string[]) {
     await batch.commit();
   }
 }
+
+/** Removes all test accounts ending with a given suffix (e.g. "@e2e.test"). */
+export async function purgeTestUsersBySuffix(suffix: string) {
+  const db = getDb();
+  const all = await db.collection("users").get();
+  const targetIds = all.docs.filter((doc) => String(doc.data().email).endsWith(suffix)).map((doc) => doc.id);
+  if (targetIds.length > 0) {
+    await removeTestUsers(targetIds);
+  }
+}

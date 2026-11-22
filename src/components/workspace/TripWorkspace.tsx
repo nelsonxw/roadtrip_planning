@@ -10,6 +10,8 @@ import { OvernightSuggestions, useOvernightPlan } from "./OvernightSuggestions";
 import { PlacesPanel } from "./PlacesPanel";
 import { ChatPanel } from "./ChatPanel";
 import type { PopularPlacesResult } from "@/server/popularPlaces";
+import type { ChatMessageView } from "@/server/proposals";
+import type { SuggestedStop } from "./MapPanel";
 import { filterHotels, type HotelSearch, type PendingHotel } from "./hotelSearch";
 
 type MobileTab = "map" | "trip" | "chat";
@@ -27,11 +29,25 @@ function clampPanel(width: number, total: number, otherPanel: number): number {
   return Math.round(Math.min(Math.max(width, MIN_SIDE_PX), maxWidth));
 }
 
+/** Places the assistant proposes to add. They stay on the map until the proposal is accepted or rejected. */
+export function suggestedStopsFromProposals(messages: ChatMessageView[]): SuggestedStop[] {
+  return messages.flatMap((message) =>
+    message.proposal?.status === "pending"
+      ? message.proposal.operations.flatMap((operation) =>
+          operation.type === "add_stop" ? [{ name: operation.name, latitude: operation.latitude, longitude: operation.longitude }] : [],
+        )
+      : [],
+  );
+}
+
 const STATUS_TEXT = { loading: "Loading…", saved: "All changes saved", saving: "Saving…", error: "Not saved · see message" } as const;
 
 export function TripWorkspace({ tripId }: { tripId: string }) {
   const trip = useTrip(tripId);
-  const overnight = useOvernightPlan(tripId, trip.trip?.version ?? 0);
+  const overnightKey = trip.trip
+    ? JSON.stringify([trip.trip.stops.map((stop) => [stop.id, stop.latitude, stop.longitude, stop.stopType, stop.sequence]), trip.trip.preferences])
+    : "";
+  const overnight = useOvernightPlan(tripId, overnightKey);
   const [dismissedTowns, setDismissedTowns] = useState<Set<string>>(new Set());
   const dismissTown = (id: string) => setDismissedTowns((prev) => new Set(prev).add(id));
   const visibleOvernight = overnight.plan?.needed ? overnight.plan.suggestions.filter((item) => !dismissedTowns.has(item.settlement.id)) : [];
@@ -239,6 +255,7 @@ export function TripWorkspace({ tripId }: { tripId: string }) {
             <MapPanel
               trip={current}
               overnightSuggestions={visibleOvernight}
+              suggestedStops={suggestedStopsFromProposals(trip.messages)}
               previewGeometry={previewKey ? previewGeometry : []}
               selectedStopId={selectedStopId}
               onSelectStop={(id) => {

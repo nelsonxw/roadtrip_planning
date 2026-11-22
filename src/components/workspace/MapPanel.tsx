@@ -23,9 +23,13 @@ const MARKER_CLASS: Record<Stop["stopType"], string> = {
 };
 const TYPE_LABEL: Record<Stop["stopType"], string> = { origin: "Start", destination: "Destination", required: "Required stop", optional: "Optional stop", return: "Return to start" };
 
+export type SuggestedStop = { name: string; latitude: number; longitude: number };
+
 type Props = {
   trip: TripView;
   overnightSuggestions: { afterDay: number; settlement: { id: string; name: string; latitude: number; longitude: number; detourMiles: number; population: number } }[];
+  /** Places the assistant proposed that are not saved yet. Shown as pulsing markers until the proposal is decided. */
+  suggestedStops: SuggestedStop[];
   /** Dashed preview of the route through the suggested overnight towns. Not saved until a suggestion is accepted. */
   previewGeometry: [number, number][];
   selectedStopId: string | null;
@@ -93,7 +97,7 @@ function flyToPoint(map: MapLibreMap, longitude: number, latitude: number) {
   map.flyTo({ center: [longitude, latitude], zoom: Math.max(map.getZoom(), 14), duration: 800 });
 }
 
-export function MapPanel({ trip, overnightSuggestions, previewGeometry, selectedStopId, onSelectStop, hotelMatches, pickedHotelId, onPickHotel, pendingHotel, popularPlaces }: Props) {
+export function MapPanel({ trip, overnightSuggestions, suggestedStops, previewGeometry, selectedStopId, onSelectStop, hotelMatches, pickedHotelId, onPickHotel, pendingHotel, popularPlaces }: Props) {
   const popularMarkersRef = useRef(new Map<string, Marker>());
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -111,6 +115,7 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
   useEffect(() => {
     if (!containerRef.current || !webgl) return;
     const markers = markersRef.current;
+    const popularMarkers = popularMarkersRef.current;
     const map = new maplibre.Map({ container: containerRef.current, style: MAP_STYLE, center: [-98.5, 39.5], zoom: 3 });
     map.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
     mapRef.current = map;
@@ -256,6 +261,9 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
     return () => {
       markers.forEach(({ marker }) => marker.remove());
       markers.clear();
+      popularMarkers.forEach((marker) => marker.remove());
+      popularMarkers.clear();
+      popupRef.current?.remove();
       map.remove();
       mapRef.current = null;
       setMapReady(false);
@@ -431,7 +439,35 @@ export function MapPanel({ trip, overnightSuggestions, previewGeometry, selected
       const marker = new maplibre.Marker({ element: wrapper, anchor: "center" }).setLngLat([place.longitude, place.latitude]).addTo(map);
       markers.set(place.wikidataUrl, marker);
     });
+
+    return () => {
+      markers.forEach((marker) => marker.remove());
+      markers.clear();
+    };
   }, [popularPlaces, mapReady]);
+
+  // Assistant suggestions pulse on the map. Keyed on the coordinates so the animation is not restarted by unrelated re-renders.
+  const suggestedKey = suggestedStops.map((stop) => `${stop.name}|${stop.latitude},${stop.longitude}`).join("||");
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !suggestedKey) return;
+    const markers = suggestedStops.map((stop) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "relative flex h-5 w-5 items-center justify-center";
+      wrapper.setAttribute("role", "img");
+      wrapper.setAttribute("aria-label", `Suggested stop: ${stop.name}`);
+      wrapper.title = stop.name;
+      const pulse = document.createElement("span");
+      pulse.className = "absolute inset-0 animate-ping rounded-full bg-amber-400 opacity-75 motion-reduce:animate-none";
+      const dot = document.createElement("span");
+      dot.className = "relative h-3 w-3 rounded-full border-2 border-white bg-amber-500 shadow";
+      wrapper.append(pulse, dot);
+      return new maplibre.Marker({ element: wrapper, anchor: "center" }).setLngLat([stop.longitude, stop.latitude]).addTo(map);
+    });
+    return () => markers.forEach((marker) => marker.remove());
+    // The key stands in for the suggestion list, so the markers only change when the suggestions do.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestedKey, mapReady]);
 
   // The located-but-unsaved hotel from the add form. Zooms to it each time it is located.
   useEffect(() => {

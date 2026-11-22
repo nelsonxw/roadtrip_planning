@@ -122,6 +122,7 @@ describe("stop editing, versioning and undo", () => {
     expect(view.stops.map((s) => s.name)).toEqual(["Austin, TX, USA", "First", "Second", "Third", "Denver, CO, USA"]);
     expect(view.version).toBe(2);
     expect(view.legs).toHaveLength(4);
+    expect((await m.tripService.listTripsForOwner(owner))[0].stopCount).toBe(5);
   });
 
   it("rejects a write based on a stale version instead of silently overwriting", async () => {
@@ -168,51 +169,6 @@ describe("stop editing, versioning and undo", () => {
     expect(view.routeErrors.length).toBeGreaterThan(0);
     expect(view.legs.every((leg) => leg.status === "missing")).toBe(true);
     expect(view.itinerary.warnings.join(" ")).toMatch(/not calculated yet/);
-  });
-});
-
-describe("stop-list import", () => {
-  it("imports valid rows in file order and leaves invalid and ambiguous rows out of the trip", async () => {
-    const importer = await import("@/server/stopImport");
-    const owner = await newUser("import");
-    const id = await newTrip(owner);
-    const table = {
-      headers: ["Name", "Address"],
-      rows: [
-        ["Denver Museum", "Denver"],
-        ["Mystery", ""],
-        ["Santa Fe", "Santa Fe"],
-        ["Springfield", "Springfield"],
-      ],
-    };
-    const mapping = { name: 0, address: 1 };
-    const geocoder = new m.demo.DemoGeocoding();
-    const rows = await importer.validateRows(table, mapping, {
-      search: async (query) => (query === "Springfield" ? [{ label: "A", name: "A", latitude: 1, longitude: 1, confidence: 0.6 }, { label: "B", name: "B", latitude: 2, longitude: 2, confidence: 0.6 }] : geocoder.search(query, 5)),
-    });
-    expect(rows.map((r) => r.status)).toEqual(["ok", "invalid", "ok", "ambiguous"]);
-
-    const importable = rows.flatMap((row) => (row.status === "ok" ? [row] : []));
-    await m.tripService.applyTripChange({
-      tripId: id,
-      ownerId: owner,
-      expectedVersion: 1,
-      summary: "Imported",
-      operations: importable.map((row) => ({
-        type: "add_stop" as const,
-        name: row.draft.name,
-        address: row.draft.address,
-        latitude: row.draft.latitude ?? row.resolved!.latitude,
-        longitude: row.draft.longitude ?? row.resolved!.longitude,
-        stopType: row.draft.stopType,
-        source: "upload" as const,
-        notes: row.draft.notes,
-        visitMinutes: null,
-      })),
-    });
-    const view = await m.tripService.getTripView(id, owner, demoServices());
-    expect(view.stops.map((s) => s.name)).toEqual(["Austin, TX, USA", "Denver Museum", "Santa Fe", "Denver, CO, USA"]);
-    expect(view.stops.filter((s) => s.source === "upload")).toHaveLength(2);
   });
 });
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GeoapifyRouting } from "@/services/routing/geoapify";
 import { OpenRouteServiceRouting } from "@/services/routing/openrouteservice";
 import { OpenRouteServiceGeocoding } from "@/services/geocoding/openrouteservice";
 import { DemoRouting, DemoGeocoding } from "@/services/demo/demoServices";
@@ -53,6 +54,25 @@ describe("OpenRouteService routing adapter", () => {
     const leg = await new OpenRouteServiceRouting("k").route([0, 0], [1, 1], { preference: "fastest", avoid: [] });
     expect(leg.distanceMeters).toBe(10);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Geoapify routing adapter", () => {
+  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports a waypoint with no road nearby as not_found, so the user is asked to move the stop", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ message: "No suitable edges near location." }), { status: 400 }));
+    const error = await new GeoapifyRouting("k").route([-104.6, 32.12], [-97.7, 30.27], { preference: "fastest", avoid: [] }).catch((e) => e);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(error.kind).toBe("not_found");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps other bad requests as invalid_response", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ message: "Invalid waypoints." }), { status: 400 }));
+    const error = await new GeoapifyRouting("k").route([0, 0], [1, 1], { preference: "fastest", avoid: [] }).catch((e) => e);
+    expect(error.kind).toBe("invalid_response");
   });
 });
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { TripView } from "@/server/tripService";
-import type { Hotel, TripOperation } from "@/domain/trip";
+import { startOverOperations, type Hotel, type TripOperation } from "@/domain/trip";
 import type { ItineraryDay } from "@/domain/itinerary";
 import { formatDistance, formatDuration } from "@/lib/format";
 import { PlaceSearch, type ChosenPlace } from "../PlaceSearch";
@@ -83,12 +83,11 @@ export function ItineraryPanel({ trip, selectedStopId, onSelectStop, apply, conf
 
   /** Removes every stop between the endpoints, and the return if the trip is round trip. Origin and destination stay. */
   async function startOver() {
-    const middle = trip.stops.filter((stop) => stop.stopType === "required" || stop.stopType === "optional");
-    if (middle.length === 0 && !roundTrip) return;
-    const message = `Remove all ${middle.length} stop${middle.length === 1 ? "" : "s"} between your start and destination${roundTrip ? " and turn off round trip" : ""}? You can undo this with Undo last change.`;
+    const operations = startOverOperations(trip.stops, roundTrip);
+    const middleCount = operations.length - (roundTrip ? 1 : 0);
+    if (operations.length === 0) return;
+    const message = `Remove all ${middleCount} stop${middleCount === 1 ? "" : "s"} between your start and destination${roundTrip ? " and turn off round trip" : ""}? You can undo this with Undo last change.`;
     if (!window.confirm(message)) return;
-    const removals = middle.map((stop) => ({ type: "remove_stop" as const, stopId: stop.id, confirmRequired: true }));
-    const operations = roundTrip ? [...removals, { type: "set_round_trip" as const, enabled: false }] : removals;
     await apply(operations, "Started over: kept only start and destination");
   }
 

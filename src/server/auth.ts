@@ -28,10 +28,15 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 const sessions = () => getDb().collection("sessions");
 
-export async function createSession(userId: string) {
+export async function createSession(userId: string, email?: string) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
-  await sessions().doc(sha256(token)).set({ userId, expiresAt, createdAt: new Date() });
+  await sessions().doc(sha256(token)).set({
+    userId,
+    ...(email ? { email } : {}),
+    expiresAt,
+    createdAt: new Date(),
+  });
   return { token, expiresAt };
 }
 
@@ -46,10 +51,13 @@ export async function getCurrentUser() {
   const sessionRef = sessions().doc(sha256(token));
   const snap = await sessionRef.get();
   if (!snap.exists) return null;
-  const { userId, expiresAt } = snap.data()!;
+  const { userId, email, expiresAt } = snap.data()!;
   if (expiresAt.toDate() < new Date()) {
     await sessionRef.delete();
     return null;
+  }
+  if (email && typeof email === "string") {
+    return { id: userId, email };
   }
   const user = await findUserById(userId);
   return user ? { id: user.id, email: user.email } : null;

@@ -6,8 +6,11 @@ import { api } from "@/lib/clientApi";
 export type OvernightSuggestion = { afterDay: number; settlement: { id: string; name: string; latitude: number; longitude: number; detourMiles: number; population: number } };
 export type OvernightPlan = { needed: boolean; days: number; minPopulation: number; suggestions: OvernightSuggestion[]; note: string };
 
-/** Fetches the overnight plan for a trip. Refetches when the trip version changes, so suggestions stay current. */
-export function useOvernightPlan(tripId: string, version: number) {
+/**
+ * Fetches the overnight plan for a trip. `planKey` covers only what the plan depends on (stop positions and
+ * preferences), so edits such as notes or hotels do not trigger a new lookup.
+ */
+export function useOvernightPlan(tripId: string, planKey: string) {
   const [plan, setPlan] = useState<OvernightPlan | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -23,7 +26,7 @@ export function useOvernightPlan(tripId: string, version: number) {
     return () => {
       active = false;
     };
-  }, [tripId, version]);
+  }, [tripId, planKey]);
 
   return { plan, failed };
 }

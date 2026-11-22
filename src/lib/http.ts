@@ -4,6 +4,8 @@ type FetchJsonOptions = RequestInit & {
   provider: string;
   timeoutMs?: number;
   retries?: number;
+  /** Lets a provider map its own error responses to a kind, for example "no road near this point" to not_found. */
+  classifyError?: (status: number, body: string) => ProviderErrorKind | undefined;
 };
 
 const RETRY_DELAY_MS = 400;
@@ -28,7 +30,7 @@ function kindForStatus(status: number): ProviderErrorKind {
  * failures, and conversion of every failure into a ProviderError the UI can explain.
  */
 export async function fetchProviderJson<T>(url: string, options: FetchJsonOptions): Promise<T> {
-  const { provider, timeoutMs = 15000, retries = 1, ...init } = options;
+  const { provider, timeoutMs = 15000, retries = 1, classifyError, ...init } = options;
   let lastError: ProviderError | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -36,7 +38,9 @@ export async function fetchProviderJson<T>(url: string, options: FetchJsonOption
     try {
       const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) {
-        lastError = new ProviderError(provider, kindForStatus(response.status), messageForStatus(provider, response.status));
+        const body = await response.text().catch(() => "");
+        const kind = classifyError?.(response.status, body) ?? kindForStatus(response.status);
+        lastError = new ProviderError(provider, kind, messageForStatus(provider, response.status));
       } else {
         try {
           return (await response.json()) as T;

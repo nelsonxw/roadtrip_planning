@@ -11,7 +11,7 @@ const credentials = z.object({
 export const POST = publicRoute(async (request) => {
   const { email, password } = await parseBody(request, credentials);
   const user = await createUser(email, await hashPassword(password));
-  const session = await createSession(user.id);
+  const session = await createSession(user.id, user.email);
   await setSessionCookie(session.token, session.expiresAt);
   return json({ user: { id: user.id, email: user.email } }, 201);
 });

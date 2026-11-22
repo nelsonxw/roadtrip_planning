@@ -24,4 +24,8 @@ export class TtlCache<V> {
     }
     this.entries.set(key, { value, expiresAt: Date.now() + this.ttlMs });
   }
+
+  clear() {
+    this.entries.clear();
+  }
 }

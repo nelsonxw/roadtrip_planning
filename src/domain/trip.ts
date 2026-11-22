@@ -130,12 +130,16 @@ export function isFixedStop(stop: Stop): boolean {
   return stop.stopType === "origin" || stop.stopType === "destination" || stop.stopType === "return";
 }
 
-export function intermediateStops(stops: Stop[]): Stop[] {
-  return sortStops(stops).filter((stop) => !isFixedStop(stop));
+/** Operations that keep only the start and destination: remove every middle stop, then turn off round trip if it is on. */
+export function startOverOperations(stops: Stop[], roundTrip: boolean): TripOperation[] {
+  const removals: TripOperation[] = stops
+    .filter((stop) => stop.stopType === "required" || stop.stopType === "optional")
+    .map((stop) => ({ type: "remove_stop", stopId: stop.id, confirmRequired: true }));
+  return roundTrip ? [...removals, { type: "set_round_trip", enabled: false }] : removals;
 }
 
-export function isRoundTrip(stops: Stop[]): boolean {
-  return stops.some((stop) => stop.stopType === "return");
+export function intermediateStops(stops: Stop[]): Stop[] {
+  return sortStops(stops).filter((stop) => !isFixedStop(stop));
 }
 
 export function renumber(stops: Stop[]): Stop[] {

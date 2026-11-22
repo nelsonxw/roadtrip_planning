@@ -13,7 +13,7 @@
 
 Build an AI-powered, interactive road trip planning application. Users
 can enter a starting location and destination, provide intermediate
-stops, upload a list of stops, or describe their travel plans through a
+stops, or describe their travel plans through a
 conversational chat interface.
 
 The application combines route planning, points-of-interest discovery,
@@ -32,7 +32,7 @@ structured itinerary provides an actionable and downloadable trip plan.
 
 1.  Create a driving route between a user-provided origin and
     destination.
-2.  Support optional intermediate stops, including uploaded stop lists.
+2.  Support optional intermediate stops, added manually.
 3.  Recommend relevant attractions, scenic detours, restaurants,
     accommodations, parks, and other points of interest along or near
     the route.
@@ -74,7 +74,7 @@ structured itinerary provides an actionable and downloadable trip plan.
 ### Workflow B: Trip with user-specified stops
 
 1.  User enters origin and destination.
-2.  User adds intermediate stops manually or uploads a file.
+2.  User adds intermediate stops manually, one at a time.
 3.  App validates and geocodes each stop.
 4.  User chooses whether the entered stop order must be preserved or may
     be optimized.
@@ -130,22 +130,12 @@ correction. - Do not silently replace an unresolved location with a
 different place. - Confirm the selected locations before calculating the
 route.
 
-### 5.2 Stop-list upload
+### 5.2 Stop-list upload (removed)
 
-Support CSV and XLSX uploads for user-provided stop lists.
-
-Expected input columns may include: - Stop name - Address or
-city/state - Optional latitude and longitude - Optional notes - Optional
-preferred order or sequence number - Optional required/optional
-indicator
-
-Requirements: - Provide a sample downloadable CSV template. - Show a
-preview before importing. - Let users map uploaded columns to
-application fields if headers differ. - Validate rows and identify
-missing or ambiguous locations. - Report row-level errors and allow
-users to correct or skip invalid rows. - Preserve the original uploaded
-stop order unless the user explicitly requests optimization. - Never
-treat an uploaded file as executable content.
+CSV and XLSX stop-list upload was built and then removed from the
+product. Users add intermediate stops one at a time through the place
+search, and can reset a trip with "Start over", which keeps only the
+origin and destination. Start over can be undone with "Undo last change".
 
 ### 5.3 Route calculation
 
@@ -195,6 +185,15 @@ recommendation to the itinerary, dismiss it, or save it for later.
 Do not claim a business or attraction is open at a particular time
 unless current hours have been retrieved from a reliable source. Display
 the source or last-checked time where practical.
+
+Popular places (implemented): the user can ask for popular places near
+the route. The assistant model suggests well-known places, and each
+suggestion is checked against Wikidata: it must exist there, match the
+name, and lie within 50 miles of the route. Verified places appear on the
+map as numbered markers with a short Wikipedia summary and a link to the
+full article. The user chooses whether places near the origin and the
+return point are included. Results are not presented as opening-hours
+data.
 
 ### 5.5 Map visualization
 
@@ -315,8 +314,7 @@ secrets in client-side code.
 
 Export formats: - PDF: polished, printable itinerary with day-by-day
 plan, route summary, selected photos, and useful links. - CSV:
-structured stop and itinerary data. - XLSX: formatted itinerary table,
-if practical. - JSON: optional machine-readable backup.
+structured stop and itinerary data. - XLSX and JSON: deferred to Phase 2.
 
 The export should reflect the latest saved itinerary and include a
 generated timestamp. Provide a download action and meaningful filenames.
@@ -359,8 +357,7 @@ personal characteristics.
 ### Security and privacy
 
 -   Keep API secrets on the server.
--   Validate and sanitize user input and uploaded files.
--   Enforce upload size and file-type limits.
+-   Validate and sanitize all user input.
 -   Protect authenticated trip data with appropriate authorization
     checks.
 -   Do not expose one user's private trips to another user.
@@ -400,10 +397,12 @@ avoid unnecessary complexity.
 
 ### Data storage
 
--   PostgreSQL
--   Prisma or a comparable ORM
--   Optional PostGIS if spatial queries justify it
--   Object storage only if user-uploaded media is added
+-   Cloud Firestore (Firebase project), accessed from the server with the
+    Firebase Admin SDK. Trips hold their stops, revision history, chat
+    messages, and proposals as subcollections; users, sessions, and the
+    route cache are separate collections.
+-   Version checks and multi-step saves run in Firestore transactions.
+-   Object storage only if user-uploaded media is added (not in use)
 
 ### External services --- provider abstraction required
 
@@ -470,7 +469,7 @@ not a rigid mandate.
 -   longitude
 -   sequence
 -   stopType: origin, destination, required, overnight, optional
--   source: user, upload, AI
+-   source: user, AI
 -   notes
 -   estimatedVisitMinutes
 -   status
@@ -549,11 +548,11 @@ Store provider-specific raw data only when necessary and permitted.
 ## 9. API and application operations
 
 Define clear server-side operations, such as: - Create trip - Get trip -
-Update trip preferences - Geocode location - Import and validate stop
-file - Calculate route - Search POIs along route - Propose itinerary -
-Apply proposed trip change - Add/remove/reorder stop - Recalculate
-affected route legs - Save trip revision - Export PDF/CSV/XLSX/JSON -
-Delete trip
+Update trip preferences - Geocode location - Calculate route - Search
+POIs along route - Suggest popular places - Propose itinerary - Apply
+proposed trip change - Add/remove/reorder stop - Start over (keep only
+origin and destination) - Recalculate affected route legs - Save trip
+revision - Export PDF/CSV - Delete trip
 
 AI tool calls must invoke these application operations rather than
 directly modifying arbitrary database records.
@@ -564,7 +563,7 @@ directly modifying arbitrary database records.
 
 1.  Responsive web application.
 2.  Origin/destination input and manual intermediate stops.
-3.  CSV/XLSX stop-list upload with preview and validation.
+3.  Start over: reset a trip to its origin and destination, undoable.
 4.  Interactive driving route map.
 5.  POI discovery along or near the route.
 6.  Basic photos and source links for recommendations.
@@ -606,10 +605,10 @@ The MVP is not complete until the following scenarios work:
     driving route.
 2.  Add three manual intermediate stops and show them in the correct
     order.
-3.  Upload a CSV containing valid, invalid, and ambiguous stops; preview
-    and report each row correctly.
-4.  Preserve uploaded stop order unless the user explicitly chooses
-    optimization.
+3.  Start over removes every intermediate stop and the return (if round
+    trip), keeps the origin and destination, and can be undone.
+4.  Add stops manually and keep their order unless the user explicitly
+    chooses optimization.
 5.  Search for relevant POIs along the route and show results with
     grounded descriptions and source links.
 6.  Add a POI from the map to the itinerary and verify that the route
@@ -636,7 +635,7 @@ The MVP is not complete until the following scenarios work:
 Deliver: - Complete working source code. - `requirement.md` included in
 the repository. - `README.md` with setup, architecture, and operating
 instructions. - `.env.example` listing required environment variables
-without real secrets. - Database schema and migration instructions. -
+without real secrets. - Firestore setup instructions (project, database, service account key). -
 Provider setup instructions and links to relevant developer portals. -
 Seed/demo trip data. - Automated tests for critical workflows. - A clear
 list of implemented, partially implemented, and deferred requirements. -

@@ -28,21 +28,35 @@ export async function previewRouteThrough(tripId: string, ownerId: string, point
     if (best >= 0) byLeg[best].push(point);
   }
 
-  let geometry: LngLat[] = [];
-  let errors = 0;
+  const segmentPairs: { from: LngLat; to: LngLat }[] = [];
   for (let i = 0; i < stops.length - 1; i++) {
     const start: LngLat = [stops[i].longitude, stops[i].latitude];
     const end: LngLat = [stops[i + 1].longitude, stops[i + 1].latitude];
     const via = [...byLeg[i]].sort((a, b) => haversineMeters(start, a) - haversineMeters(start, b));
     const chain = [start, ...via, end];
     for (let j = 0; j < chain.length - 1; j++) {
-      try {
-        const leg = await getRouteLeg(chain[j], chain[j + 1], view.preferences, services);
-        geometry = geometry.concat(geometry.length ? leg.geometry.slice(1) : leg.geometry);
-      } catch {
-        errors++;
-      }
+      segmentPairs.push({ from: chain[j], to: chain[j + 1] });
     }
+  }
+
+  const legs = await Promise.all(
+    segmentPairs.map(async ({ from, to }) => {
+      try {
+        return await getRouteLeg(from, to, view.preferences, services);
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  let geometry: LngLat[] = [];
+  let errors = 0;
+  for (const leg of legs) {
+    if (!leg) {
+      errors++;
+      continue;
+    }
+    geometry = geometry.concat(geometry.length ? leg.geometry.slice(1) : leg.geometry);
   }
   return { geometry, errors };
 }

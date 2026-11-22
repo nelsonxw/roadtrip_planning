@@ -16,12 +16,20 @@ export const MAX_DISTANCE_METERS = 50 * METERS_PER_MILE;
 const SUGGESTIONS_REQUESTED = 12;
 const VERIFY_AT_ONCE = 4;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
 const WIKIDATA_API = "https://www.wikidata.org/w/api.php";
 const PROVIDER = "Wikidata";
 /** Wikidata rejects generic agents with HTTP 429 and asks for a descriptive agent with a contact link. */
 export const WIKIDATA_USER_AGENT = "RoadTripAI/0.1 (https://github.com/nelsonxw/roadtrip_planning)";
 
 const cache = new TtlCache<PopularPlacesResult>(DAY_MS, 100);
+type WikidataPlace = { id: string; latitude: number; longitude: number; wikipediaTitle: string | null };
+const entityCache = new TtlCache<WikidataPlace | null>(WEEK_MS, 500);
+
+export function clearPopularPlacesCache(): void {
+  cache.clear();
+  entityCache.clear();
+}
 
 const suggestionSchema = z.object({
   places: z
@@ -157,34 +165,50 @@ export async function verifySuggestion(
   routeVertices: LngLat[],
   userAgent: string,
 ): Promise<{ id: string; latitude: number; longitude: number; distanceMeters: number; wikipediaTitle: string | null } | null> {
-  const search = await wikidata<{ search?: { id: string; match?: { text?: string } }[] }>(
-    new URLSearchParams({ action: "wbsearchentities", search: name, language: "en", type: "item", limit: "3", format: "json" }),
-    userAgent,
-  );
-  const items = search?.search ?? [];
-  const ids = items.map((item) => item.id);
-  if (ids.length === 0) return null;
-  // Wikidata often labels a park shortly ("Palo Duro State Park") and keeps the full name as an alias, so a search match on the alias counts too.
-  const aliasMatch = new Set(items.filter((item) => item.match?.text && normalizeName(item.match.text) === normalizeName(name)).map((item) => item.id));
-  const entities = await wikidata<{ entities?: Record<string, WikidataEntity> }>(
-    new URLSearchParams({ action: "wbgetentities", ids: ids.join("|"), props: "labels|claims|sitelinks", languages: "en", format: "json" }),
-    userAgent,
-  );
-  for (const id of ids) {
-    const entity = entities?.entities?.[id];
-    const label = entity?.labels?.en?.value;
-    const coordinate = entity?.claims?.P625?.[0]?.mainsnak?.datavalue?.value;
-    if (!label || !coordinate || !(aliasMatch.has(id) || titleMatchesPlace(name, label))) continue;
-    const distanceMeters = distanceToLineMeters([coordinate.longitude, coordinate.latitude], routeVertices);
-    if (distanceMeters <= MAX_DISTANCE_METERS) {
-      return { id, latitude: coordinate.latitude, longitude: coordinate.longitude, distanceMeters, wikipediaTitle: entity?.sitelinks?.enwiki?.title ?? null };
+  const normKey = normalizeName(name);
+  let place = entityCache.get(normKey);
+
+  if (place === undefined) {
+    const search = await wikidata<{ search?: { id: string; match?: { text?: string } }[] }>(
+      new URLSearchParams({ action: "wbsearchentities", search: name, language: "en", type: "item", limit: "3", format: "json" }),
+      userAgent,
+    );
+    const items = search?.search ?? [];
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) {
+      entityCache.set(normKey, null);
+      return null;
     }
+    // Wikidata often labels a park shortly ("Palo Duro State Park") and keeps the full name as an alias, so a search match on the alias counts too.
+    const aliasMatch = new Set(items.filter((item) => item.match?.text && normalizeName(item.match.text) === normKey).map((item) => item.id));
+    const entities = await wikidata<{ entities?: Record<string, WikidataEntity> }>(
+      new URLSearchParams({ action: "wbgetentities", ids: ids.join("|"), props: "labels|claims|sitelinks", languages: "en", format: "json" }),
+      userAgent,
+    );
+    place = null;
+    for (const id of ids) {
+      const entity = entities?.entities?.[id];
+      const label = entity?.labels?.en?.value;
+      const coordinate = entity?.claims?.P625?.[0]?.mainsnak?.datavalue?.value;
+      if (!label || !coordinate || !(aliasMatch.has(id) || titleMatchesPlace(name, label))) continue;
+      place = { id, latitude: coordinate.latitude, longitude: coordinate.longitude, wikipediaTitle: entity?.sitelinks?.enwiki?.title ?? null };
+      break;
+    }
+    entityCache.set(normKey, place);
+  }
+
+  if (!place) return null;
+  const distanceMeters = distanceToLineMeters([place.longitude, place.latitude], routeVertices);
+  if (distanceMeters <= MAX_DISTANCE_METERS) {
+    return { ...place, distanceMeters };
   }
   return null;
 }
 
-/** Asks the model for popular places, then keeps only the ones Wikidata confirms within 50 miles. */
-/** `fresh` skips the saved result and asks the model again. The new result is still saved for later reloads. */
+/**
+ * Asks the model for popular places, then keeps only the ones Wikidata confirms within 50 miles.
+ * `fresh` skips the saved result and asks the model again. The new result is still saved for later reloads.
+ */
 export async function findPopularPlaces(view: TripView, services: Services, includeEndpoints: boolean, fresh = false, userAgent = WIKIDATA_USER_AGENT): Promise<PopularPlacesResult> {
   if (!services.assistantConfig) return { status: "unavailable", places: [], note: "Popular place suggestions need a Gemini key (GEMINI_API_KEY)." };
   if (view.routeGeometry.length < 2) return { status: "ok", places: [], note: "Calculate a route before asking for popular places." };
@@ -228,12 +252,13 @@ export async function findPopularPlaces(view: TripView, services: Services, incl
   }
 
   // A missing article leaves the summary empty; the place itself is still shown.
-  const withSummaries: PopularPlace[] = [];
   const kept = includeEndpoints ? places : excludeNearEndpoints(places, view.stops);
-  for (const { wikipediaTitle, ...place } of kept) {
-    const summary = wikipediaTitle ? await wikipediaSummary(wikipediaTitle, userAgent) : null;
-    withSummaries.push({ ...place, extract: briefExtract(summary?.extract ?? ""), wikipediaUrl: summary?.content_urls?.desktop?.page ?? null });
-  }
+  const withSummaries: PopularPlace[] = await Promise.all(
+    kept.map(async ({ wikipediaTitle, ...place }) => {
+      const summary = wikipediaTitle ? await wikipediaSummary(wikipediaTitle, userAgent) : null;
+      return { ...place, extract: briefExtract(summary?.extract ?? ""), wikipediaUrl: summary?.content_urls?.desktop?.page ?? null };
+    }),
+  );
 
   const result: PopularPlacesResult = {
     status: "ok",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { briefExtract, buildPrompt, excludeNearEndpoints, MAX_DISTANCE_METERS, parseSuggestions, routeContext, verifySuggestion } from "@/server/popularPlaces";
+import { briefExtract, buildPrompt, clearPopularPlacesCache, excludeNearEndpoints, MAX_DISTANCE_METERS, parseSuggestions, routeContext, verifySuggestion } from "@/server/popularPlaces";
 import type { Services } from "@/services/providers";
 import type { TripView } from "@/server/tripService";
 import type { Stop } from "@/domain/trip";
@@ -116,7 +116,10 @@ describe("parseSuggestions", () => {
 });
 
 describe("verifySuggestion", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearPopularPlacesCache();
+  });
 
   it("confirms a place whose Wikidata coordinates are close to the route", async () => {
     mockWikidata({ label: "Palo Duro Canyon State Park", latitude: 34.93, longitude: -101.66 });

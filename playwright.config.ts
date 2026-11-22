@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+try {
+  process.loadEnvFile(".env.local");
+} catch {
+  // If .env.local does not exist, environment variables may be provided directly.
+}
+
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 
 export default defineConfig({

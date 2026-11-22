@@ -1,5 +1,5 @@
 import type { LngLat } from "@/domain/geo";
-import { ProviderError } from "@/lib/errors";
+import { ProviderError, type ProviderErrorKind } from "@/lib/errors";
 import { fetchProviderJson } from "@/lib/http";
 import type { RouteLeg, RoutingOptions, RoutingService } from "../types";
 
@@ -12,6 +12,14 @@ type GeoapifyRouteResponse = {
     properties?: { distance?: number; time?: number };
   }[];
 };
+
+/**
+ * Geoapify answers HTTP 400 when a waypoint is not near any road, such as a park centre in wilderness.
+ * That is a "no road here" result, so it is reported as not_found and the user is asked to move the stop.
+ */
+function classifyGeoapifyError(status: number, body: string): ProviderErrorKind | undefined {
+  return status === 400 && body.includes("No suitable edges") ? "not_found" : undefined;
+}
 
 /** The app's avoid options, named as Geoapify expects them. */
 const AVOID_RULES: Record<RoutingOptions["avoid"][number], string> = { tollways: "tolls", highways: "highways", ferries: "ferries" };
@@ -36,6 +44,7 @@ export class GeoapifyRouting implements RoutingService {
       provider: PROVIDER,
       headers: { Accept: "application/json" },
       timeoutMs: 20000,
+      classifyError: classifyGeoapifyError,
     });
     const feature = data.features?.[0];
     const distance = feature?.properties?.distance;
